@@ -71,6 +71,14 @@ python -m app.signals --send --watch --interval-seconds 600
 
 `.env.example` lists the names only. This application does **not** automatically load `.env` files. Never commit the token or paste it into chat, logs, or workflow YAML. Local delivery state is stored in `data/crypto.db`; keep that database across restarts.
 
+For a private Telegram destination, open your own bot and press **Start**, then run this from the project directory:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.telegram_setup
+```
+
+Enter the BotFather token at the hidden prompt. It stays in process memory and is not saved; the helper prints only private chat IDs found through `getUpdates`, not message contents or the token. If multiple users have contacted the bot, it lists multiple IDs: identify your own before configuring a destination. A bot with an active webhook cannot use `getUpdates`; do not remove an existing webhook blindly.
+
 ### GitHub setup
 
 1. Upload the source to a **public** GitHub repository's default branch, including `.github/workflows/`. These workflows deliberately skip all jobs in private repositories, including manual runs, to avoid consuming private-repository minutes. A public repository exposes the source and research state; it does not expose Actions Secrets. `.gitignore` excludes the local database, models, virtual environment and real env files. There is no need to upload the local generated model binaries. If you prefer to keep the source private, use the local watcher instead.
