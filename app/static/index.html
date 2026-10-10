@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1018">
+  <title>Crypto AI · داشبورد پژوهش</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="/"><span class="brand-icon">◈</span><span>CRYPTO<span class="brand-ai">AI</span><small>SIGNAL RESEARCH</small></span></a>
+    <div class="nav-label">فضای پژوهش</div>
+    <a class="nav-item active" href="#overview"><span>◫</span> نمای کلی</a>
+    <a class="nav-item" href="#charts"><span>⌁</span> عملکرد مدل</a>
+    <a class="nav-item" href="#trades"><span>⇄</span> معاملات</a>
+    <a class="nav-item" href="/docs" target="_blank" rel="noopener"><span>⌘</span> مستندات API ↗</a>
+    <div class="sidebar-bottom"><span class="live-dot"></span> داده‌های تاریخی<small>Spot Market · 15m · XGBoost</small></div>
+  </aside>
+  <main id="overview">
+    <header><div class="breadcrumb">فضای پژوهش <span>/</span> داشبورد عملکرد</div><span class="research-tag">RESEARCH ONLY</span></header>
+    <section class="heading"><div><div class="eyebrow">از داده تا ارزیابی</div><h1>آزمایشگاه سیگنال‌ها<span>↗</span></h1><p>نتایج آموزش و معاملات شبیه‌سازی‌شدهٔ بیت‌کوین و اتریوم</p></div><button id="refresh" class="refresh">↻ <span>به‌روزرسانی</span></button></section>
+    <div id="status" role="status" aria-live="polite">در حال دریافت نتایج…</div>
+    <div id="error" role="alert" hidden></div>
+    <section class="asset-grid" id="assets" aria-label="مقایسه ارزها"></section>
+    <section class="panel live-panel" id="live"><div class="panel-title"><div><h2>ارزیابی زندهٔ آخرین کندل بسته‌شده</h2><p>مدل ذخیره‌شده · بازار نقدی · کندل ۱۵ دقیقه</p></div><span class="pill">LIVE EVALUATION</span></div><div id="live-signals" class="live-grid" aria-live="polite">هنوز ارزیابی زنده‌ای ثبت نشده است.</div><p class="live-note">این بخش خروجی ارزیاب را نمایش می‌دهد. دریافت مجدد صفحه، کندل جدید دریافت نمی‌کند و پیام تلگرام نمی‌فرستد. حد سود و ضرر بر پایهٔ قیمت مرجع کلوز محاسبه شده‌اند؛ سفارش اجرا نمی‌شود.</p></section>
+    <section class="toolbar"><div class="symbol-tabs" aria-label="انتخاب ارز"><button data-symbol="BTCUSDT" class="selected" aria-pressed="true">بیت‌کوین <span>BTC</span></button><button data-symbol="ETHUSDT" aria-pressed="false">اتریوم <span>ETH</span></button></div><label>اجرای آموزش <select id="run-select" aria-label="انتخاب اجرای آموزش"></select></label></section>
+    <div id="empty" class="empty" hidden>هنوز نتیجهٔ آموزشی برای این ارز ثبت نشده است.</div>
+    <div id="results" hidden>
+      <section id="metrics" class="metrics" aria-label="معیارهای بک‌تست"></section>
+      <section class="charts-grid" id="charts">
+        <article class="panel equity-panel"><div class="panel-title"><div><h2>منحنی سرمایه</h2><p>رشد مرکب سرمایه پس از هر معامله</p></div><span class="pill">شروع از ۱۰۰</span></div><div id="equity-chart" class="chart" aria-label="نمودار منحنی سرمایه"></div><div class="chart-note"><span class="legend-dot"></span> بازده خالص با کارمزد و لغزش <span>محور افقی: ترتیب معاملات</span></div></article>
+        <article class="panel quality-panel"><div class="panel-title"><div><h2>کیفیت مدل</h2><p>ارزیابی روی دادهٔ خارج از آموزش</p></div><span class="pill">XGBoost</span></div><div id="quality"></div></article>
+        <article class="panel"><div class="panel-title"><div><h2>بازده هر معامله</h2><p>معاملات سودده و زیان‌ده در مجموعهٔ آزمون</p></div><span id="trade-total" class="pill"></span></div><div id="returns-chart" class="chart small-chart" aria-label="نمودار بازده معاملات"></div></article>
+        <article class="panel"><div class="panel-title"><div><h2>افت سرمایه</h2><p>فاصلهٔ سرمایه از بالاترین مقدار قبلی</p></div><span class="pill">DRAWDOWN</span></div><div id="drawdown-chart" class="chart small-chart" aria-label="نمودار افت سرمایه"></div></article>
+      </section>
+      <section class="panel trades-panel" id="trades"><div class="panel-title"><div><h2>دفتر معاملات</h2><p>ورود، خروج و نتیجهٔ معاملات شبیه‌سازی‌شده</p></div><div class="table-actions"><select id="trade-filter" aria-label="فیلتر معاملات"><option value="all">همهٔ معاملات</option><option value="win">سودده</option><option value="loss">زیان‌ده</option><option value="TP">حد سود</option><option value="SL">حد ضرر</option><option value="TIME">پایان زمان</option></select><button id="export" class="secondary">↓ دریافت CSV</button></div></div><div class="table-scroll"><table><thead><tr><th>#</th><th>زمان ورود (تهران)</th><th>زمان خروج (تهران)</th><th>قیمت ورود</th><th>قیمت خروج</th><th>امتیاز مدل</th><th>علت خروج</th><th>بازده خالص</th></tr></thead><tbody id="trade-rows"></tbody></table></div><div class="table-footer"><span id="table-count"></span><div><button id="previous" aria-label="صفحه قبل">→</button><span id="page-number"></span><button id="next" aria-label="صفحه بعد">←</button></div></div></section>
+      <section class="method"><span>ⓘ</span><div><strong>این اعداد چه می‌گویند؟</strong><p id="method-details"></p><p>امتیاز مدل، احتمال کالیبره‌شده نیست. نتایج این صفحه بک‌تست تاریخی‌اند؛ سیگنال زنده یا تضمین سود نیستند. هر ۶۰ ثانیه فقط نتایج ذخیره‌شده دوباره دریافت می‌شوند.</p></div></section>
+    </div>
+    <footer><span>CRYPTO AI <b>RESEARCH LAB</b></span><span>داده: Binance · زمان‌ها: تهران · قیمت‌ها: USDT</span></footer>
+  </main>
+</body>
+</html>

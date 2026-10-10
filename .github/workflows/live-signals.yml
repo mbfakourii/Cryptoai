@@ -1,0 +1,40 @@
+name: Live signals to Telegram
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '3,13,23,33,43,53 * * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cryptoai-live-signals
+  cancel-in-progress: false
+
+jobs:
+  signal:
+    if: github.event.repository.private == false && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --no-cache-dir -r requirements.txt
+      - name: Download models from the last complete publication
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m app.model_registry download
+      - name: Match the model training runtime
+        run: python -m pip install --no-cache-dir -r data/models/runtime-requirements.txt
+      - name: Evaluate and send only new qualifying closed candles
+        env:
+          PYTHONIOENCODING: utf-8
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m app.signals --send --state-backend github
