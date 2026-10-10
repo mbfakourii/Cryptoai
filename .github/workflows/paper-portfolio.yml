@@ -7,8 +7,6 @@ on:
       - main
     paths:
       - .github/workflows/paper-portfolio.yml
-  schedule:
-    - cron: '7-57/10 * * * *'
 
 permissions:
   contents: write
