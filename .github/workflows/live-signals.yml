@@ -2,8 +2,13 @@ name: Paper portfolio to Telegram
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/live-signals.yml
   schedule:
-    - cron: '3,13,23,33,43,53 * * * *'
+    - cron: '7-57/10 * * * *'
 
 permissions:
   contents: write
@@ -31,10 +36,22 @@ jobs:
         run: python -m app.portfolio_models download
       - name: Match the model training runtime
         run: python -m pip install --no-cache-dir -r data/models/portfolio-runtime.txt
-      - name: Trade shared virtual wallet and report once per interval
+      - name: Trade shared virtual wallet and notify executed buys or sells
+        shell: bash
         env:
           PYTHONIOENCODING: utf-8
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: python -m app.portfolio_runner
+        run: python -m app.portfolio_runner | tee "$RUNNER_TEMP/portfolio-cycle.log"
+      - name: Summarize portfolio cycle
+        if: always()
+        shell: bash
+        run: |
+          printf '### Paper portfolio cycle\n\n```text\n' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "$RUNNER_TEMP/portfolio-cycle.log" ]; then
+            cat "$RUNNER_TEMP/portfolio-cycle.log" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Portfolio runner did not start. Inspect the preceding steps.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '\n```\n' >> "$GITHUB_STEP_SUMMARY"
