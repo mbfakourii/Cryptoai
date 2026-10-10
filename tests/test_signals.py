@@ -53,6 +53,28 @@ def test_scores_below_threshold_do_not_trigger_buy(candidate):
     assert make_signal(candidate)['action'] == 'HOLD'
 
 
+def test_freshly_trained_models_wait_without_scoring_or_sending(candidate, tmp_path, monkeypatch, capsys):
+    frame, bundle, now = candidate
+    bundle['data_end_time'] = int(frame.iloc[-1]['open_time'])
+    (tmp_path / 'BTCUSDT_xgboost.joblib').write_bytes(b'test-model')
+    snapshots, sent = [], []
+    monkeypatch.setattr(signals, 'MODEL_DIR', tmp_path)
+    monkeypatch.setattr(signals, 'SYMBOLS', ('BTCUSDT',))
+    monkeypatch.setattr(signals.joblib, 'load', lambda _: bundle)
+    monkeypatch.setattr(signals, 'market_window', lambda _: (frame, now))
+    monkeypatch.setattr(signals, 'save_snapshot', snapshots.append)
+    monkeypatch.setattr(signals, 'LocalDeliveryState', lambda: None)
+    monkeypatch.setattr(signals, 'deliver', lambda signal, _: sent.append(signal))
+    monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'test-token')
+    monkeypatch.setenv('TELEGRAM_CHAT_ID', 'test-chat')
+    assert signals.run_signals(send=True) == 0
+    assert snapshots[0]['action'] == 'WAITING'
+    assert snapshots[0]['delivery_status'] == 'waiting_for_new_candle'
+    assert bundle['model'].seen_time is None
+    assert not sent
+    assert '"errors": []' in capsys.readouterr().out
+
+
 @pytest.mark.parametrize('corruption', ['stale', 'gap', 'trained_on_latest', 'wrong_symbol', 'invalid_score'])
 def test_unsafe_inputs_cannot_generate_a_signal(candidate, corruption):
     frame, bundle, now = candidate

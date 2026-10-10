@@ -93,6 +93,8 @@ GitHub schedules can be delayed and are not a real-time SLA. A new signal is pos
 
 ### Duplicate suppression and failure handling
 
+Immediately after training, the newest closed candle may still belong to the training dataset. The runner reports `WAITING` successfully without scoring or sending until a later candle closes; invalid model metadata and stale or missing market data remain errors.
+
 The delivery key is `(symbol, candle open timestamp)`; changing the model does not bypass it. Before contacting Telegram, the runner durably reserves that key. Local workers use an atomic SQLite unique constraint. GitHub runs use a create-if-absent JSON file in the **`cryptoai-signal-state`** branch via the GitHub Contents API, plus a shared concurrency group. This state survives fresh runners, reruns and retraining. Do not delete/reset the state branch or database: doing so removes duplicate protection. A local sender and GitHub sender have separate state; use only one sender for the same destination.
 
 This is **at-most-once automatic sending**, not guaranteed exactly-once delivery. If the process crashes after reservation, Telegram times out, or Telegram rejects a message, that candle is not automatically resent. This favors avoiding duplicates over guaranteed delivery. Inspect `signal-state/<symbol>/<timestamp>.json` in the state branch: `reserved` or `unknown_or_failed` requires manual investigation; `sent` means Telegram acknowledged the message. Confirm whether the message arrived before making any manual resend. If the state service cannot confirm a reservation, Telegram is not called.

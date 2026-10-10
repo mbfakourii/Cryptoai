@@ -17,6 +17,10 @@ from app.core import BASE_URL, FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, conne
 SYMBOLS = ('BTCUSDT', 'ETHUSDT')
 
 
+class AwaitingNewCandle(ValueError):
+    pass
+
+
 def signal_connection():
     con = connect()
     con.executescript('''
@@ -164,8 +168,10 @@ def predict_signal(symbol, frame, bundle, server_time, model_id):
     if bundle.get('features') != FEATURES:
         raise ValueError('Model feature schema does not match the live pipeline.')
     candle_time = int(frame.iloc[-1]['open_time'])
-    if not isinstance(bundle.get('data_end_time'), int) or bundle['data_end_time'] >= candle_time:
-        raise ValueError('Wait for a new closed candle after the model training data ends.')
+    if not isinstance(bundle.get('data_end_time'), int):
+        raise ValueError('Invalid model training cutoff.')
+    if bundle['data_end_time'] >= candle_time:
+        raise AwaitingNewCandle('Wait for a new closed candle after the model training data ends.')
     if candle_time != server_time // INTERVAL_MS * INTERVAL_MS - INTERVAL_MS:
         raise ValueError('Latest candle is stale; no signal generated.')
     if (frame['open_time'].diff().dropna() != INTERVAL_MS).any():
@@ -266,6 +272,12 @@ def run_signals(send=False, state_backend='local'):
                 signal['delivery_status'] = 'preview'
                 save_snapshot(signal)
             results.append(signal)
+        except AwaitingNewCandle as error:
+            waiting = {'symbol': symbol, 'action': 'WAITING', 'reason': str(error),
+                       'evaluated_at': datetime.now(timezone.utc).isoformat(),
+                       'delivery_status': 'waiting_for_new_candle'}
+            save_snapshot(waiting)
+            results.append(waiting)
         except Exception as error:
             message = str(error) if isinstance(error, (ValueError, RuntimeError, FileNotFoundError)) else type(error).__name__
             failed = {'symbol': symbol, 'action': 'ERROR', 'error': message,
