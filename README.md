@@ -1,4 +1,20 @@
-# Crypto AI Signal v1 — Spot / 15m
+# Cryptoai — Shared paper wallet / 50 markets
+
+## Shared 20 USDT virtual wallet
+
+The scheduled workflow now performs automatic **paper** spot buying and selling across 50 USDT markets using **one shared 20 USDT balance**. It never places exchange orders or connects a real wallet. All positions, fees, cash, equity history and trades persist in `cryptoai-portfolio/paper/portfolio.json`; the local dashboard displays that remote wallet with a chart, open positions and trade history. This public state contains simulated balances only.
+
+Run **Actions → Train 50-market portfolio → Run workflow** first, then **Paper portfolio to Telegram → Run workflow**. Weekly training builds one pooled XGBoost model across the 50 highest-volume eligible markets with complete history, excluding stablecoins. Each market contributes 3,000 closed 15-minute candles. Chronological split boundaries are shared across markets, and future labels are purged at boundaries. The label target is a next-open to horizon-close return above 0.4%; reported Brier/AUC measure classification, not portfolio profit. Published model and pinned dependencies are stored atomically in `cryptoai-models/portfolio-bundle.zip`. The earlier BTC/ETH training workflow remains available for separate research backtests.
+
+Settings live in `config/paper-trading.json`: initial balance 20, report interval 10 minutes, entry score 0.65, exit score 0.40, maximum three positions, maximum 35% equity per position, 10% cash reserve, 1% equity stop-distance sizing and a persistent 20% drawdown entry halt. The original balance is applied **only when no stored wallet exists**; changing the config does not reset saved capital. Binance quantity steps and minimum order notional are respected. A 20 USDT wallet may only afford one or two positions, and many signals can be skipped because the minimum order is too large.
+
+Simulated fills use current ask for buys and bid for sells, plus 0.02% slippage and 0.1% fee each side. Equity estimates liquidation after these costs. Stops, targets, lower model scores and a three-hour holding limit trigger exits at the current quote when the workflow runs. There is no continuous monitoring or assumed fill at a crossed stop: a delayed runner can exit at a worse price. Data errors suspend new buys while available positions can still exit. A model will wait for a candle after its training cutoff before making new entries.
+
+Every report interval gets one aggregate Telegram message containing equity, cash, profit/loss, fees, positions and this cycle’s trades. Wallet writes use the GitHub Contents API’s SHA comparison; conflicting workers stop before sending. Reports are reserved durably **before** calling Telegram, so a crash or unknown send outcome is not automatically retried. Later intervals still report current state. Trade decisions are processed once per closed candle, and rerunning the same ten-minute slot does not execute more trades. Keep `cryptoai-portfolio` intact; deleting it resets the simulated capital and duplicate protection.
+
+The existing repository Secrets **TELEGRAM_BOT_TOKEN** and **TELEGRAM_CHAT_ID** are used unchanged. Edit them at **Settings → Secrets and variables → Actions**. `GITHUB_TOKEN` is automatic; allow updates to `cryptoai-models` and `cryptoai-portfolio`. Reports follow the ten-minute schedule nominally; GitHub can delay or drop scheduled runs. To report every 20 or 30 minutes, change `report_interval_minutes` to that multiple of ten; trading checks remain every ten minutes.
+
+All jobs use standard public-repository Linux runners, no paid data API, Actions cache or artifacts. Models and bounded wallet history live in repository branches. This aims to avoid metered Actions usage on GitHub Free. The project does not guarantee that the virtual wallet will gain value.
 
 An executable **research-only** backend. It downloads closed public Binance candles, stores them in SQLite, builds past-only technical features, trains XGBoost with purged chronological train/validation/test splits, runs a long-only spot backtest, and serves saved results via FastAPI.
 
@@ -87,7 +103,7 @@ Enter the BotFather token at the hidden prompt. It stays in process memory and i
    - `TELEGRAM_CHAT_ID`: the destination chat/group/channel ID, including its minus sign if present. For a private chat, start your bot first; the Bot API `getUpdates` response contains `message.chat.id`. For a channel, add the bot as an administrator with posting rights; an eligible public channel username such as `@your_channel` is also supported by `sendMessage`.
 3. Ensure repository/organization policy permits the workflow's `contents: write` permission. `GITHUB_TOKEN` is provided automatically by GitHub; do not create a personal access token. Rulesets must permit creation and updates of `cryptoai-signal-state` and `cryptoai-models` by GitHub Actions.
 4. In **Actions → Train signal models → Run workflow**, run training once on the default branch. Both models and their exact Python dependency versions are compressed into one atomic bundle in the `cryptoai-models` branch. Incomplete training does not replace the previous published pair. Subsequent training runs are scheduled weekly, Monday at 02:23 UTC (05:53 Tehran).
-5. In **Actions → Live signals to Telegram → Run workflow**, test the runner. Its schedule runs at minutes **03, 13, 23, 33, 43, 53** of every hour. The runner downloads the last complete published model pair, installs the training dependency versions, and checks both symbols. Missing models, market failures and missing secrets stop sending and fail the run visibly.
+5. In **Actions → Paper portfolio to Telegram → Run workflow**, test the runner. Its schedule runs at minutes **03, 13, 23, 33, 43, 53** of every hour. The runner downloads the last complete pooled portfolio model, installs its training dependency versions, and checks 50 markets against one shared virtual wallet. Missing models, market failures and missing secrets stop sending and fail the run visibly.
 
 GitHub schedules can be delayed and are not a real-time SLA. A new signal is possible only after a new 15-minute candle closes, even though checks run every 10 minutes. Training is separate; models are not retrained every 10 minutes. Hosted runners must be able to reach Binance and Telegram; regional/API failures are reported rather than substituted with fabricated data.
 
@@ -101,7 +117,7 @@ This is **at-most-once automatic sending**, not guaranteed exactly-once delivery
 
 The workflows use only standard `ubuntu-latest` runners in public repositories. They upload **no Actions artifacts**, enable **no dependency cache**, use no paid API, and publish no paid hosting. Model bundles are capped at 500 KB per publication and stored in repository Git history. Public-repository standard runner minutes are free; private jobs are skipped. This setup adds no metered Actions storage, though other repositories or services on your account can still incur charges. For an account-wide safeguard, set a GitHub Actions budget with **Stop usage when budget limit is reached**; this code does not change account billing settings.
 
-The scheduled runner does not synchronize its SQLite database to your local dashboard or host FastAPI; the local dashboard displays local evaluations. Inspect GitHub workflow output and delivery JSON in the state branch for remote results. Model and signal state contain no bot token. Preview mode does not send any messages.
+The scheduled runner does not host FastAPI. The dashboard’s paper-wallet section reads public GitHub wallet state through /portfolio; the BTC/ETH research sections continue to display local SQLite evaluations. Inspect GitHub workflow output and delivery JSON in the state branch for remote results. Model and signal state contain no bot token. Preview mode does not send any messages.
 
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule), [GitHub Contents API](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents), [Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage).
 
@@ -112,6 +128,6 @@ Market data requests use Binance's official public-data-only endpoint, `https://
 - Public Binance API availability depends on region and network. HTTP 429/451 and network errors are possible; respect exchange rate limits and terms.
 - `fetch` backfills candles backwards in batches; missing intervals trigger a training error rather than silently hiding gaps.
 - Re-running training on the same dataset does not provide new out-of-sample evidence.
-- No probability calibration, walk-forward refits, portfolio-level cash allocation, liquidity modeling, or regime shift checks yet.
+- No probability calibration, walk-forward refits, market-depth liquidity modeling, or regime shift checks yet.
 - Backtest entries at the exact next open are optimistic under some execution conditions.
 - Never treat a backtest as a prediction of future profits.

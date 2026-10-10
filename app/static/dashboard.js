@@ -30,6 +30,7 @@ async function refresh() {
   controls(true);
   $('error').hidden = true;
   try {
+    await refreshPortfolio();
     await refreshSignals();
     const runs = await get('/runs');
     const matching = runs.filter(run => run.symbol === state.symbol);
@@ -43,6 +44,26 @@ async function refresh() {
     $('status').textContent = `آخرین دریافت: ${new Intl.DateTimeFormat('fa-IR', {timeZone:'Asia/Tehran',hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(new Date())} · تازه‌سازی نتایج ذخیره‌شده هر ۶۰ ثانیه`;
   } catch (error) { showError(error); }
   finally {state.busy = false; controls(false);}
+}
+
+async function refreshPortfolio() {
+  try {
+    const wallet = await get('/portfolio');
+    if (!wallet.available) { $('paper-status').textContent = wallet.reason; return; }
+    const stale = Date.now() - wallet.updated_at > 30 * 60000;
+    $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted ? 'خرید متوقف است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
+    const model = wallet.model_metrics;
+    $('paper-training').textContent = `آموزش: ${date(Date.parse(wallet.model_trained_at))} · ${number(model.train_rows)} نمونه آموزش · ${number(model.validation_rows)} اعتبارسنجی · ${number(model.test_rows)} آزمون · Brier: ${model.test_brier.toFixed(3)} · AUC: ${model.test_auc == null ? '—' : model.test_auc.toFixed(3)} · این معیارها بازده کیف پول نیستند.`;
+    $('paper-universe').innerHTML = wallet.universe.map(symbol => `<span class="pill">${safe(symbol)} · ${safe(wallet.signals[symbol] || wallet.market_errors[symbol] || '—')}</span>`).join(' ');
+    const metrics = [['ارزش خالص', wallet.equity], ['موجودی نقد', wallet.cash], ['سود / زیان کل', wallet.total_pnl], ['کارمزد پرداخت‌شده', wallet.fees_paid]];
+    $('paper-metrics').innerHTML = metrics.map(([label,value]) => `<article class="metric"><div class="metric-label">${label}</div><div class="metric-number">${value.toFixed(4)}</div><div class="metric-detail">USDT مجازی</div></article>`).join('');
+    const points = [{time:wallet.equity_history[0]?.time || wallet.updated_at, equity:wallet.initial_balance}, ...wallet.equity_history];
+    const frame = chartFrame('paper-chart', points.map(point => point.equity), '#57d6ac', '');
+    const path = points.map((point,index) => `${index ? 'L' : 'M'} ${frame.x(index)} ${frame.y(point.equity)}`).join(' ');
+    $('paper-chart').innerHTML = frame.markup + `<path d="${path}" stroke="#57d6ac" stroke-width="2.4" fill="none"/>` + points.map((point,index) => `<circle cx="${frame.x(index)}" cy="${frame.y(point.equity)}" r="3" fill="#57d6ac"><title>${date(point.time)} · ${point.equity.toFixed(4)} USDT</title></circle>`).join('') + '</svg>';
+    $('paper-positions').innerHTML = '<h3>موقعیت‌های باز</h3><table><thead><tr><th>ارز</th><th>مقدار</th><th>هزینه ورود</th><th>حد ضرر</th><th>حد سود</th></tr></thead><tbody>' + Object.values(wallet.positions).map(position => `<tr><td>${safe(position.symbol)}</td><td>${position.quantity}</td><td>${position.cost.toFixed(4)}</td><td>${position.stop.toPrecision(6)}</td><td>${position.target.toPrecision(6)}</td></tr>`).join('') + '</tbody></table>';
+    $('paper-trades').innerHTML = '<h3>آخرین خرید و فروش‌ها</h3><table><thead><tr><th>زمان</th><th>ارز</th><th>عملیات</th><th>مبلغ</th><th>سود / زیان</th><th>علت</th></tr></thead><tbody>' + wallet.trade_history.slice(-20).reverse().map(trade => `<tr><td>${date(trade.time)}</td><td>${safe(trade.symbol)}</td><td>${safe(trade.side)}</td><td>${trade.notional.toFixed(4)}</td><td>${trade.pnl == null ? '—' : trade.pnl.toFixed(4)}</td><td>${safe(trade.reason)}</td></tr>`).join('') + '</tbody></table>';
+  } catch (_) { $('paper-status').textContent = 'دریافت کیف پول ناموفق بود؛ داده‌های نمایان ممکن است قدیمی باشند.'; }
 }
 
 async function refreshSignals() {

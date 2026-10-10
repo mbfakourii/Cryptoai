@@ -1,4 +1,4 @@
-name: Live signals to Telegram
+name: Paper portfolio to Telegram
 
 on:
   workflow_dispatch:
@@ -28,13 +28,13 @@ jobs:
       - name: Download models from the last complete publication
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python -m app.model_registry download
+        run: python -m app.portfolio_models download
       - name: Match the model training runtime
-        run: python -m pip install --no-cache-dir -r data/models/runtime-requirements.txt
-      - name: Evaluate and send only new qualifying closed candles
+        run: python -m pip install --no-cache-dir -r data/models/portfolio-runtime.txt
+      - name: Trade shared virtual wallet and report once per interval
         env:
           PYTHONIOENCODING: utf-8
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: python -m app.signals --send --state-backend github
+        run: python -m app.portfolio_runner
