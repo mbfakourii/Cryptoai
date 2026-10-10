@@ -103,6 +103,8 @@ The scheduled runner does not synchronize its SQLite database to your local dash
 
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#onschedule), [GitHub Contents API](https://docs.github.com/en/rest/repos/contents#create-or-update-file-contents), [Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage).
 
+Market data requests use Binance's official public-data-only endpoint, `https://data-api.binance.vision`, for both historical candles and live server time/candles. This avoids relying on the trading API host for public market data on hosted runners.
+
 ## Cautions / known limitations
 
 - Public Binance API availability depends on region and network. HTTP 429/451 and network errors are possible; respect exchange rate limits and terms.
