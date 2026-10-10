@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - .github/workflows/live-signals.yml
+      - .github/workflows/paper-portfolio.yml
   schedule:
     - cron: '7-57/10 * * * *'
 
