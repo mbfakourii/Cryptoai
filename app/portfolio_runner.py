@@ -74,8 +74,11 @@ def send_report(state):
 
 
 def persist_and_report(store, state, sha, config, sender=send_report):
-    report_slot = state['updated_at'] // (config['report_interval_minutes'] * 60000)
-    due = state['last_report_slot'] is None or report_slot > state['last_report_slot']
+    report_slot = state['updated_at'] // 600000
+    has_trades = any(event['side'] in ('BUY', 'SELL') for event in state.get('last_events', []))
+    due = has_trades and (state['last_report_slot'] is None or report_slot > state['last_report_slot'])
+    if not has_trades:
+        state['report_status'] = 'not_required'
     if due:
         state['last_report_slot'] = report_slot
         state['report_status'] = 'reserved'

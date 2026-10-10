@@ -81,6 +81,7 @@ def test_report_reservation_survives_unknown_delivery_and_suppresses_retry():
     config = load_config()
     state = new_wallet(config)
     state['updated_at'] = 1800000
+    state['last_events'] = [{'side': 'BUY'}]
     store = Store()
     calls = []
 
@@ -100,7 +101,36 @@ def test_conflicting_wallet_update_never_sends_report():
     config = load_config()
     state = new_wallet(config)
     state['updated_at'] = 1800000
+    state['last_events'] = [{'side': 'BUY'}]
     calls = []
     with pytest.raises(RuntimeError):
         persist_and_report(Store(True), state, None, config, calls.append)
     assert not calls
+
+
+def test_cycle_without_trades_persists_wallet_without_telegram():
+    config = load_config()
+    state = new_wallet(config)
+    state.update(updated_at=1800000, last_events=[], signals={'BTCUSDT': 'WAITING'})
+    store, calls = Store(), []
+    persist_and_report(store, state, None, config, calls.append)
+    assert not calls
+    assert len(store.states) == 1
+    assert store.states[0]['report_status'] == 'not_required'
+    assert store.states[0]['last_report_slot'] is None
+
+
+@pytest.mark.parametrize('side', ['BUY', 'SELL'])
+def test_trade_sends_once_then_next_idle_cycle_stays_silent(side):
+    config = load_config()
+    config['report_interval_minutes'] = 30
+    state = new_wallet(config)
+    state.update(updated_at=1800000, last_events=[{'side': side}])
+    store, calls = Store(), []
+    persist_and_report(store, state, None, config, calls.append)
+    assert len(calls) == 1 and store.states[-1]['report_status'] == 'sent'
+    persist_and_report(store, state, 'new-sha', config, calls.append)
+    assert len(calls) == 1
+    state.update(updated_at=2400000, last_events=[])
+    persist_and_report(store, state, 'new-sha', config, calls.append)
+    assert len(calls) == 1 and store.states[-1]['report_status'] == 'not_required'
