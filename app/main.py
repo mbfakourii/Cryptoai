@@ -5,6 +5,8 @@ from pathlib import Path
 from app.core import connect, latest_runs
 from app.signals import latest_signals
 from app.portfolio import load_config, validate_wallet
+import base64
+import json
 import requests
 import time
 
@@ -40,11 +42,17 @@ def portfolio():
     repository = load_config()['github_repository']
     try:
         response = requests.get(f'https://raw.githubusercontent.com/{repository}/cryptoai-portfolio/paper/portfolio.json',
-                                params={'t': int(time.time() // 60)}, timeout=12)
+                                params={'t': int(time.time() // 60)}, timeout=6)
         if response.status_code == 404:
-            return {'available': False, 'reason': 'هنوز اجرای کیف پول در GitHub ثبت نشده است.'}
-        response.raise_for_status()
-        state = response.json()
+            response = requests.get(f'https://api.github.com/repos/{repository}/contents/paper/portfolio.json',
+                                    params={'ref': 'cryptoai-portfolio'}, timeout=6)
+            if response.status_code == 404:
+                return {'available': False, 'reason': 'هنوز اجرای کیف پول در GitHub ثبت نشده است.'}
+            response.raise_for_status()
+            state = json.loads(base64.b64decode(response.json()['content']))
+        else:
+            response.raise_for_status()
+            state = response.json()
         validate_wallet(state)
     except (requests.RequestException, ValueError, KeyError):
         raise HTTPException(503, 'Cannot retrieve valid shared wallet state') from None
