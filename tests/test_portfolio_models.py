@@ -6,7 +6,8 @@ import pandas as pd
 import pytest
 
 from app.core import INTERVAL_MS
-from app.portfolio_models import pooled_splits, unpack
+from app.portfolio import load_config
+from app.portfolio_models import model_config, pooled_splits, select_entry_policy, unpack
 
 
 def test_pooled_training_purges_future_labels_across_all_markets():
@@ -30,3 +31,59 @@ def test_bundle_rejects_unexpected_paths_before_extracting():
         archive.writestr('../unexpected', b'x')
     with pytest.raises(ValueError):
         unpack(output.getvalue())
+
+
+def validation_fixture(profitable=True):
+    return pd.DataFrame({'symbol': ['AAAUSDT'] * 120,
+                         'open_time': np.arange(120) * INTERVAL_MS,
+                         'open': 100., 'close': 100.,
+                         'high': 100.5 if profitable else 100.,
+                         'low': 100. if profitable else 99.5, 'atr': .1})
+
+
+def test_threshold_selection_can_find_validated_entries_below_the_fixed_cutoff():
+    config = load_config()
+    policy = select_entry_policy(validation_fixture(), np.full(120, .45), config)
+    assert policy['status'] == 'validated'
+    assert config['exit_threshold'] < policy['entry_threshold'] < config['entry_threshold']
+    assert policy['validation']['trade_count'] >= policy['minimum_trades']
+    assert policy['validation']['mean_net_return'] > 0
+
+
+def test_threshold_selection_does_not_force_entries_on_losing_validation_trades():
+    config = load_config()
+    policy = select_entry_policy(validation_fixture(False), np.full(120, .45), config)
+    assert policy['status'] == 'no_validated_threshold'
+    assert policy['entry_threshold'] == config['entry_threshold']
+    assert policy['validation'] is None
+
+
+def test_threshold_selection_requires_enough_validation_trades():
+    policy = select_entry_policy(validation_fixture().iloc[:4], np.full(4, .45), load_config())
+    assert policy['status'] == 'no_validated_threshold'
+
+
+@pytest.mark.parametrize('scores', [np.full(120, np.nan), np.full(120, 1.1), np.full(119, .45)])
+def test_threshold_selection_rejects_invalid_validation_scores(scores):
+    with pytest.raises(ValueError, match='validation scores'):
+        select_entry_policy(validation_fixture(), scores, load_config())
+
+
+def test_saved_threshold_is_used_without_changing_risk_limits():
+    config = load_config()
+    resolved = model_config({'entry_threshold': .45}, config)
+    assert resolved['entry_threshold'] == .45
+    assert config['entry_threshold'] == .65
+    for key in config.keys() - {'entry_threshold'}:
+        assert resolved[key] == config[key]
+
+
+def test_legacy_models_keep_the_configured_threshold_until_retrained():
+    config = load_config()
+    assert model_config({}, config) == config
+
+
+@pytest.mark.parametrize('threshold', [0, .4, .9, float('nan'), '0.45'])
+def test_saved_threshold_cannot_bypass_configured_bounds(threshold):
+    with pytest.raises(ValueError, match='entry threshold'):
+        model_config({'entry_threshold': threshold}, load_config())

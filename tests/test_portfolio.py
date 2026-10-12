@@ -3,6 +3,7 @@ import copy
 import pytest
 
 from app.portfolio import load_config, new_wallet, paper_cycle
+from app.portfolio_models import model_config
 from app.portfolio_runner import persist_and_report
 
 
@@ -43,6 +44,19 @@ def test_minimum_order_is_respected():
     state, events = paper_cycle(new_wallet(config), signals, quotes, markets, {}, 1800000, config)
     assert not events and state['cash'] == 20
     assert set(state['signals'].values()) == {'BELOW_MINIMUM_ORDER'}
+
+
+def test_saved_model_threshold_is_respected_by_order_eligibility():
+    config, signals, quotes, markets = fixtures()
+    for signal in signals.values():
+        signal['model_score'] = .5
+    wallet = new_wallet(config)
+    _, blocked = paper_cycle(wallet, signals, quotes, markets, {}, 1800000, config)
+    assert not blocked
+    resolved = model_config({'entry_threshold': .45}, config)
+    state, events = paper_cycle(wallet, signals, quotes, markets, {}, 1800000, resolved)
+    assert events and all(event['side'] == 'BUY' for event in events)
+    assert state['cash'] >= state['equity'] * config['cash_reserve_fraction']
 
 
 def test_market_error_blocks_new_buys_but_stop_loss_still_sells():

@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+from collections import Counter
 from datetime import datetime, timezone
 
 import joblib
@@ -9,7 +10,7 @@ import requests
 from app.core import MODEL_DIR
 from app.market import book_quotes, candle_windows, public_data
 from app.portfolio import load_config, new_wallet, paper_cycle, validate_wallet
-from app.portfolio_models import predict
+from app.portfolio_models import model_config, predict
 from app.signals import GitHubDeliveryState
 
 
@@ -100,6 +101,7 @@ def run():
     if not all(os.environ.get(key) for key in ('TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID')):
         raise ValueError('Telegram repository secrets are missing.')
     bundle = joblib.load(MODEL_DIR / 'portfolio.joblib')
+    config = model_config(bundle, config)
     markets = {item['symbol']: item for item in bundle['markets']}
     if len(markets) != config['universe_size']:
         raise ValueError('Incomplete portfolio universe.')
@@ -127,9 +129,17 @@ def run():
     state['universe'] = list(markets)
     state['model_metrics'] = bundle['metrics']
     state['model_trained_at'] = bundle['trained_at']
+    state['entry_threshold'] = config['entry_threshold']
+    state['signal_scores'] = {symbol: signal['model_score'] for symbol, signal in signals.items()
+                              if 'model_score' in signal}
     persist_and_report(store, state, sha, config)
     print(json.dumps({'equity': state['equity'], 'cash': state['cash'], 'events': events,
-                      'errors': errors, 'report': state['report_status']}, ensure_ascii=False))
+                      'errors': errors, 'report': state['report_status'],
+                      'entry_threshold': state['entry_threshold'],
+                      'signal_counts': dict(Counter(state['signals'].values())),
+                      'maximum_model_score': max(state['signal_scores'].values(), default=None),
+                      'threshold_selection': bundle['metrics'].get('threshold_selection', {}).get('status', 'legacy_fixed')},
+                     ensure_ascii=False))
 
 
 if __name__ == '__main__':

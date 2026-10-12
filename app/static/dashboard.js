@@ -54,7 +54,18 @@ async function refreshPortfolio() {
     $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted ? 'خرید متوقف است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
     const model = wallet.model_metrics;
     $('paper-training').textContent = `آموزش: ${date(Date.parse(wallet.model_trained_at))} · ${number(model.train_rows)} نمونه آموزش · ${number(model.validation_rows)} اعتبارسنجی · ${number(model.test_rows)} آزمون · Brier: ${model.test_brier.toFixed(3)} · AUC: ${model.test_auc == null ? '—' : model.test_auc.toFixed(3)} · این معیارها بازده کیف پول نیستند.`;
-    $('paper-universe').innerHTML = wallet.universe.map(symbol => `<span class="pill">${safe(symbol)} · ${safe(wallet.signals[symbol] || wallet.market_errors[symbol] || '—')}</span>`).join(' ');
+    const threshold = wallet.entry_threshold ?? model.entry_threshold;
+    if (Number.isFinite(threshold)) $('paper-training').textContent += ` آستانه خرید: ${threshold.toFixed(3)}.`;
+    const policyStatus = model.threshold_selection?.status;
+    $('paper-training').textContent += policyStatus === 'validated'
+      ? ' آستانه از معاملات اعتبارسنجی انتخاب شده است.'
+      : policyStatus === 'no_validated_threshold'
+        ? ' هیچ آستانه‌ای معیار اعتبارسنجی را نگذرانده؛ آستانه ثابت حفظ شده است.'
+        : ' مدل قدیمی است؛ برای بررسی آستانه دوباره آموزش دهید.';
+    $('paper-universe').innerHTML = wallet.universe.map(symbol => {
+      const score = wallet.signal_scores?.[symbol];
+      return `<span class="pill">${safe(symbol)} · ${safe(wallet.signals[symbol] || wallet.market_errors[symbol] || '—')}${Number.isFinite(score) ? ` · امتیاز ${score.toFixed(3)}` : ''}</span>`;
+    }).join(' ');
     const metrics = [['ارزش خالص', wallet.equity], ['موجودی نقد', wallet.cash], ['سود / زیان کل', wallet.total_pnl], ['کارمزد پرداخت‌شده', wallet.fees_paid]];
     $('paper-metrics').innerHTML = metrics.map(([label,value]) => `<article class="metric"><div class="metric-label">${label}</div><div class="metric-number">${value.toFixed(4)}</div><div class="metric-detail">USDT مجازی</div></article>`).join('');
     const points = [{time:wallet.equity_history[0]?.time || wallet.updated_at, equity:wallet.initial_balance}, ...wallet.equity_history];

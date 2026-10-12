@@ -13,7 +13,7 @@ import pandas as pd
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from xgboost import XGBClassifier
 
-from app.core import FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, label_data, make_features
+from app.core import FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, label_data, make_features, simulate
 from app.market import candle_frame, candle_windows, public_data, universe
 from app.portfolio import load_config
 from app.signals import GitHubDeliveryState
@@ -35,6 +35,50 @@ def pooled_splits(frames, horizon):
         parts[1].append(frame[(frame.open_time >= a) & (future < b)])
         parts[2].append(frame[frame.open_time >= b])
     return tuple(pd.concat(part, ignore_index=True) for part in parts)
+
+
+def threshold_results(frame, scores, threshold, config):
+    scores = pd.Series(np.asarray(scores), index=frame.index)
+    returns = []
+    for _, market in frame.groupby('symbol', sort=False):
+        market = market.sort_values('open_time')
+        trades = simulate(market.reset_index(drop=True), scores.loc[market.index].to_numpy(),
+                          threshold=threshold, horizon=config['horizon_bars'],
+                          fee_bps=config['fee_bps_per_side'])
+        slippage_adjustment = 2 * (2 - config['slippage_bps_per_side']) / 10000
+        returns.extend(trade['net_return'] + slippage_adjustment for trade in trades)
+    return {'trade_count': len(returns),
+            'mean_net_return': float(np.mean(returns)) if returns else None,
+            'net_profitable_fraction': float(np.mean(np.asarray(returns) > 0)) if returns else None}
+
+
+def select_entry_policy(validation, scores, config, minimum_trades=20):
+    scores = np.asarray(scores, dtype=float)
+    if (scores.shape != (len(validation),) or not len(scores)
+            or not np.isfinite(scores).all() or ((scores < 0) | (scores > 1)).any()):
+        raise ValueError('Invalid validation scores.')
+    ceiling, floor = config['entry_threshold'], config['exit_threshold']
+    candidates = sorted({ceiling, *[float(value) for value in np.quantile(
+        scores, [.5, .6, .7, .8, .9, .95, .99, .995, .999]) if floor < value <= ceiling]})
+    evaluations = [{'threshold': threshold, **threshold_results(validation, scores, threshold, config)}
+                   for threshold in candidates]
+    eligible = [result for result in evaluations if result['trade_count'] >= minimum_trades
+                and result['mean_net_return'] > 0]
+    selected = max(eligible, key=lambda result: (result['mean_net_return'], result['threshold'])) if eligible else None
+    return {'entry_threshold': selected['threshold'] if selected else ceiling,
+            'status': 'validated' if selected else 'no_validated_threshold',
+            'minimum_trades': minimum_trades, 'validation': selected,
+            'candidates': evaluations}
+
+
+def model_config(bundle, config):
+    resolved = dict(config)
+    threshold = bundle.get('entry_threshold', config['entry_threshold'])
+    if (not isinstance(threshold, (int, float)) or not np.isfinite(threshold)
+            or not config['exit_threshold'] < threshold <= config['entry_threshold']):
+        raise ValueError('Invalid model entry threshold; retrain after changing thresholds.')
+    resolved['entry_threshold'] = threshold
+    return resolved
 
 
 def train():
@@ -63,13 +107,20 @@ def train():
                           n_jobs=2, eval_metric='logloss')
     model.fit(train_set[FEATURES], train_set.target.astype(int),
               eval_set=[(validation[FEATURES], validation.target.astype(int))], verbose=False)
+    policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config)
     scores = model.predict_proba(test[FEATURES])[:, 1]
     metrics = {'train_rows': len(train_set), 'validation_rows': len(validation),
                'test_rows': len(test), 'test_brier': float(brier_score_loss(test.target, scores)),
                'test_auc': float(roc_auc_score(test.target, scores)) if test.target.nunique() == 2 else None,
-               'qualifying_test_signals': int((scores >= config['entry_threshold']).sum())}
+               'configured_entry_threshold': config['entry_threshold'],
+               'entry_threshold': policy['entry_threshold'],
+               'threshold_selection': policy,
+               'qualifying_test_signals': int((scores >= policy['entry_threshold']).sum()),
+               'test_score_max': float(scores.max()),
+               'test_trade_results': threshold_results(test, scores, policy['entry_threshold'], config)}
     bundle = {'schema': 1, 'model': model, 'features': FEATURES, 'interval': INTERVAL,
               'markets': markets, 'horizon': config['horizon_bars'], 'metrics': metrics,
+              'entry_threshold': policy['entry_threshold'],
               'data_end_time': max(int(frame.open_time.iloc[-1]) for frame in frames.values()),
               'trained_at': datetime.now(timezone.utc).isoformat()}
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -117,6 +168,7 @@ def registry(command):
 
 
 def predict(symbol, frame, bundle, now, config):
+    config = model_config(bundle, config)
     if bundle.get('schema') != 1 or bundle.get('features') != FEATURES or bundle.get('interval') != INTERVAL:
         raise ValueError('Invalid pooled model schema.')
     candle = int(frame.open_time.iloc[-1])
