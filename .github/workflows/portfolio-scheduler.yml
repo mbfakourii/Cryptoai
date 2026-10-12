@@ -1,16 +1,20 @@
-name: Portfolio ten-minute timer
+name: Portfolio candle-close timer
 
 on:
   workflow_dispatch:
     inputs:
       next_slot:
-        description: Next ten-minute UTC slot; leave empty to start now
+        description: Legacy timer input; ignored during migration
+        type: string
+        required: false
+      next_candle_slot:
+        description: Next fifteen-minute UTC slot; leave empty to start now
         type: string
         required: false
       cycles:
-        description: Cycles before handing off to the next timer (1 to 30)
+        description: Cycles before handing off to the next timer (1 to 20)
         type: number
-        default: 30
+        default: 20
         required: true
   push:
     branches:
@@ -39,9 +43,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Dispatch portfolio every ten minutes and hand off before runner expiry
+      - name: Dispatch learning and trading after each fifteen-minute candle
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SCHEDULER_CYCLES: ${{ github.event_name == 'push' && '1' || inputs.cycles }}
-          SCHEDULER_NEXT_SLOT: ${{ inputs.next_slot }}
+          SCHEDULER_NEXT_CANDLE_SLOT: ${{ inputs.next_candle_slot }}
         run: python -u -m app.workflow_scheduler

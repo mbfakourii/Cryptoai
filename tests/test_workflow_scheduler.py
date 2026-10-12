@@ -17,7 +17,7 @@ class Clock:
         self.now += seconds
 
 
-def test_dispatch_duration_does_not_shift_ten_minute_boundaries():
+def test_dispatch_duration_does_not_shift_fifteen_minute_boundaries():
     clock, calls = Clock(125), []
 
     def dispatch(workflow, inputs=None):
@@ -25,17 +25,17 @@ def test_dispatch_duration_does_not_shift_ten_minute_boundaries():
         clock.now += 35
 
     scheduler.run_scheduler(dispatch, cycles=3, clock=clock.time, sleep=clock.sleep)
-    assert [call[1] for call in calls[:-1]] == [125, 600, 1200]
+    assert [call[1] for call in calls[:-1]] == [125, 900, 1800]
     assert calls[-1][0] == scheduler.SCHEDULER_WORKFLOW
-    assert calls[-1][2] == {'next_slot': '3', 'cycles': '30'}
+    assert calls[-1][2] == {'next_candle_slot': '3', 'cycles': '20'}
 
 
 def test_handoff_waits_for_next_slot_without_dispatching_it_early():
     clock, calls = Clock(125), []
     scheduler.run_scheduler(lambda workflow, inputs=None: calls.append((workflow, clock.now, inputs)),
                             cycles=1, next_slot=1, clock=clock.time, sleep=clock.sleep)
-    assert calls[0] == (scheduler.PORTFOLIO_WORKFLOW, 600, None)
-    assert calls[1][2]['next_slot'] == '2'
+    assert calls[0] == (scheduler.PORTFOLIO_WORKFLOW, 900, None)
+    assert calls[1][2]['next_candle_slot'] == '2'
 
 
 def test_delayed_runner_skips_missed_slots_instead_of_replaying_them():
@@ -43,7 +43,7 @@ def test_delayed_runner_skips_missed_slots_instead_of_replaying_them():
     scheduler.run_scheduler(lambda workflow, inputs=None: calls.append((workflow, clock.now, inputs)),
                             cycles=1, next_slot=1, clock=clock.time, sleep=clock.sleep)
     assert calls[0][1] == 1950
-    assert calls[1][2]['next_slot'] == '4'
+    assert calls[1][2]['next_candle_slot'] == '3'
 
 
 def test_temporary_dispatch_failure_does_not_stop_later_cycles():
@@ -55,7 +55,7 @@ def test_temporary_dispatch_failure_does_not_stop_later_cycles():
             raise scheduler.TransientDispatchError('Temporary failure')
 
     scheduler.run_scheduler(dispatch, cycles=2, clock=clock.time, sleep=clock.sleep)
-    assert calls[1][:2] == (scheduler.PORTFOLIO_WORKFLOW, 600)
+    assert calls[1][:2] == (scheduler.PORTFOLIO_WORKFLOW, 900)
     assert calls[2][0] == scheduler.SCHEDULER_WORKFLOW
 
 
@@ -68,7 +68,7 @@ def test_handoff_retries_preserve_the_next_slot():
             raise scheduler.TransientDispatchError('Temporary failure')
 
     scheduler.run_scheduler(dispatch, cycles=1, clock=clock.time, sleep=clock.sleep)
-    assert [call[1] for call in calls[1:]] == [{'next_slot': '1', 'cycles': '30'}] * 3
+    assert [call[1] for call in calls[1:]] == [{'next_candle_slot': '1', 'cycles': '20'}] * 3
 
 
 def test_permission_failure_stops_timer_without_spawning_another_timer():
@@ -83,7 +83,7 @@ def test_permission_failure_stops_timer_without_spawning_another_timer():
     assert calls == [scheduler.PORTFOLIO_WORKFLOW]
 
 
-@pytest.mark.parametrize('cycles,next_slot', [(0, None), (31, None), (1, -1)])
+@pytest.mark.parametrize('cycles,next_slot', [(0, None), (21, None), (1, -1)])
 def test_invalid_windows_do_not_dispatch(cycles, next_slot):
     with pytest.raises(ValueError):
         scheduler.run_scheduler(lambda *args: pytest.fail('Unexpected dispatch'),
@@ -142,3 +142,16 @@ def test_scheduler_cannot_run_on_a_local_machine(monkeypatch):
     monkeypatch.delenv('GITHUB_ACTIONS', raising=False)
     with pytest.raises(ValueError, match='only in GitHub Actions'):
         scheduler.main()
+
+
+def test_legacy_timer_handoff_does_not_reinterpret_ten_minute_slots(monkeypatch):
+    monkeypatch.setenv('GITHUB_ACTIONS', 'true')
+    monkeypatch.setenv('GITHUB_REPOSITORY', 'owner/repo')
+    monkeypatch.setenv('GITHUB_TOKEN', 'test-token')
+    monkeypatch.setenv('SCHEDULER_CYCLES', '30')
+    monkeypatch.setenv('SCHEDULER_NEXT_SLOT', '1234567')
+    monkeypatch.delenv('SCHEDULER_NEXT_CANDLE_SLOT', raising=False)
+    calls = []
+    monkeypatch.setattr(scheduler, 'run_scheduler', lambda dispatch, **kwargs: calls.append(kwargs))
+    scheduler.main()
+    assert calls == [{'cycles': 20, 'next_slot': None}]

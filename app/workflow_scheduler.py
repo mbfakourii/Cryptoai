@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-INTERVAL_SECONDS = 600
-CYCLES_PER_RUN = 30
+INTERVAL_SECONDS = 900
+CYCLES_PER_RUN = 20
 PORTFOLIO_WORKFLOW = 'paper-portfolio.yml'
 SCHEDULER_WORKFLOW = 'portfolio-scheduler.yml'
 
@@ -58,7 +58,7 @@ def run_scheduler(dispatch, cycles=CYCLES_PER_RUN, next_slot=None, clock=time.ti
         slot += 1
     for attempt in range(3):
         try:
-            dispatch(SCHEDULER_WORKFLOW, {'next_slot': str(slot), 'cycles': str(CYCLES_PER_RUN)})
+            dispatch(SCHEDULER_WORKFLOW, {'next_candle_slot': str(slot), 'cycles': str(CYCLES_PER_RUN)})
             print(f'Scheduler continuation dispatched for slot {slot}.', flush=True)
             return
         except TransientDispatchError:
@@ -73,8 +73,8 @@ def main():
     repository, token = os.environ.get('GITHUB_REPOSITORY'), os.environ.get('GITHUB_TOKEN')
     if not repository or not token:
         raise ValueError('GitHub Actions repository or token is missing.')
-    cycles = int(os.environ.get('SCHEDULER_CYCLES') or CYCLES_PER_RUN)
-    next_slot = os.environ.get('SCHEDULER_NEXT_SLOT')
+    cycles = min(int(os.environ.get('SCHEDULER_CYCLES') or CYCLES_PER_RUN), CYCLES_PER_RUN)
+    next_slot = os.environ.get('SCHEDULER_NEXT_CANDLE_SLOT')
     run_scheduler(lambda workflow, inputs=None: dispatch_workflow(repository, token, workflow, inputs),
                   cycles=cycles, next_slot=int(next_slot) if next_slot else None)
 

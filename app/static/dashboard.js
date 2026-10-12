@@ -51,7 +51,7 @@ async function refreshPortfolio() {
     const wallet = await get('/portfolio');
     if (!wallet.available) { $('paper-status').textContent = wallet.reason; return; }
     const stale = Date.now() - wallet.updated_at > 30 * 60000;
-    $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted ? 'خرید متوقف است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
+    $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted || wallet.market_context?.ready === false ? 'ورود جدید متوقف است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
     const model = wallet.model_metrics;
     $('paper-training').textContent = `آموزش: ${date(Date.parse(wallet.model_trained_at))} · ${number(model.train_rows)} نمونه آموزش · ${number(model.validation_rows)} اعتبارسنجی · ${number(model.test_rows)} آزمون · Brier: ${model.test_brier.toFixed(3)} · AUC: ${model.test_auc == null ? '—' : model.test_auc.toFixed(3)} · این معیارها بازده کیف پول نیستند.`;
     const threshold = wallet.entry_threshold ?? model.entry_threshold;
@@ -62,6 +62,16 @@ async function refreshPortfolio() {
       : policyStatus === 'no_validated_threshold'
         ? ' هیچ آستانه‌ای معیار اعتبارسنجی را نگذرانده؛ آستانه ثابت حفظ شده است.'
         : ' مدل قدیمی است؛ برای بررسی آستانه دوباره آموزش دهید.';
+    const learning = wallet.learning_summary;
+    if (learning) {
+      $('paper-training').textContent += ` یادگیری هر کندل: ${number(learning.market_samples)} نمونه قیمت و ${number(learning.closed_trade_samples)} نتیجه معامله؛ ${learning.market_active ? 'مدل تطبیقی فعال' : 'مدل تطبیقی در حال یادگیری و ارزیابی'}؛ آخرین آموزش تدریجی: ${learning.last_update ? date(learning.last_update) : 'در انتظار مشخص‌شدن نتیجه نمونه‌ها'}.`;
+      $('paper-training').textContent += learning.feedback_active ? ' فیلتر نتیجه معاملات فعال است.' : ' فیلتر نتیجه معاملات در حال ارزیابی است.';
+    }
+    const context = wallet.market_context;
+    if (context) {
+      const macroText = Object.entries(context.macro).map(([key, item]) => `${key === 'gold' ? 'آتی طلا' : 'DXY'}: ${number(item.price)} (${date(item.as_of)}${item.status === 'recent' ? '' : '؛ تأخیردار یا بازار بسته'})`).join(' · ');
+      $('paper-training').textContent += ` ${macroText} · ${context.news.length} خبر از ${context.news_sources.join('، ')}.${context.ready ? '' : ' داده بیرونی ناقص؛ ورود جدید متوقف است.'}`;
+    }
     $('paper-universe').innerHTML = wallet.universe.map(symbol => {
       const score = wallet.signal_scores?.[symbol];
       return `<span class="pill">${safe(symbol)} · ${safe(wallet.signals[symbol] || wallet.market_errors[symbol] || '—')}${Number.isFinite(score) ? ` · امتیاز ${score.toFixed(3)}` : ''}</span>`;

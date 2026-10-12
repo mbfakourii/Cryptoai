@@ -9,6 +9,8 @@ import requests
 
 from app.core import MODEL_DIR
 from app.market import book_quotes, candle_windows, public_data
+from app.market_context import collect_context
+from app.online_learning import adapt_signals, learning_summary, record_trade_outcomes, trim_pending
 from app.portfolio import load_config, new_wallet, paper_cycle, validate_wallet
 from app.portfolio_models import model_config, predict
 from app.signals import GitHubDeliveryState
@@ -30,7 +32,11 @@ class WalletStore:
         return state, payload['sha']
 
     def write(self, state, sha):
-        content = json.dumps(state, ensure_ascii=False, allow_nan=False).encode()
+        content = json.dumps(state, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
+        while len(content) > 800_000 and state.get('learning', {}).get('pending'):
+            trim_pending(state['learning'], 50)
+            state['learning_summary'] = learning_summary(state['learning'])
+            content = json.dumps(state, ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode()
         if len(content) > 800_000:
             raise ValueError('Wallet exceeds storage budget.')
         body = {'branch': self.github.branch, 'message': 'Update shared paper wallet',
@@ -118,6 +124,7 @@ def run():
             signals[symbol] = predict(symbol, frame, bundle, now, config)
         except ValueError as error:
             errors[symbol] = str(error)
+    context = collect_context(int(public_data('/time')['serverTime']))
     quotes = book_quotes(set(markets) | set(wallet['positions']))
     execution_time = int(public_data('/time')['serverTime'])
     if execution_time - now > 120000:
@@ -125,7 +132,13 @@ def run():
     for symbol in set(markets) | set(wallet['positions']):
         if symbol not in quotes:
             errors[symbol] = 'Execution quote unavailable.'
+    learning, signals, snapshots = adapt_signals(wallet.get('learning'), frames, signals, quotes,
+                                                context, execution_time, config)
     state, events = paper_cycle(wallet, signals, quotes, markets, errors, execution_time, config)
+    record_trade_outcomes(learning, events, snapshots)
+    state['learning'] = learning
+    state['learning_summary'] = learning_summary(learning)
+    state['market_context'] = {key: value for key, value in context.items() if key != 'vector'}
     state['universe'] = list(markets)
     state['model_metrics'] = bundle['metrics']
     state['model_trained_at'] = bundle['trained_at']
@@ -138,6 +151,7 @@ def run():
                       'entry_threshold': state['entry_threshold'],
                       'signal_counts': dict(Counter(state['signals'].values())),
                       'maximum_model_score': max(state['signal_scores'].values(), default=None),
+                      'learning': state['learning_summary'], 'context_errors': context['errors'],
                       'threshold_selection': bundle['metrics'].get('threshold_selection', {}).get('status', 'legacy_fixed')},
                      ensure_ascii=False))
 
