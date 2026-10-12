@@ -189,11 +189,24 @@ def predict(symbol, frame, bundle, now, config):
             'model_score': score, 'atr': atr, 'candle_time': candle, 'horizon_bars': bundle['horizon']}
 
 
+def ensure_horizon():
+    bundle = joblib.load(MODEL_DIR / FILES[0])
+    if bundle.get('horizon') == load_config()['horizon_bars']:
+        return
+    train()
+    registry('upload')
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['train', 'upload', 'download'])
+    parser.add_argument('command', choices=['train', 'upload', 'download', 'ensure-horizon'])
     args = parser.parse_args()
     try:
-        train() if args.command == 'train' else registry(args.command)
+        if args.command == 'ensure-horizon':
+            ensure_horizon()
+        elif args.command == 'train':
+            train()
+        else:
+            registry(args.command)
     except (ValueError, RuntimeError) as error:
         parser.exit(1, f'{error}\n')

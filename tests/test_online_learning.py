@@ -22,7 +22,7 @@ def fixtures(count=100):
                           'volume': rng.uniform(10, 100, count)})
     candle = int(frame.open_time.iloc[-1])
     signal = {'symbol': 'AAAUSDT', 'action': 'BUY', 'model_score': .8,
-              'candle_time': candle, 'atr': 1., 'horizon_bars': 12}
+              'candle_time': candle, 'atr': 1., 'horizon_bars': 4}
     context = {'ready': True, 'vector': [0.] * CONTEXT_DIMENSIONS}
     quotes = {'AAAUSDT': {'bid': float(close[-1]), 'ask': float(close[-1]) + .01}}
     return frame, {'AAAUSDT': signal}, context, quotes
@@ -56,13 +56,13 @@ def test_future_return_is_not_learned_until_the_horizon_candle_closes():
     state, _, _ = adapt_signals(None, {'AAAUSDT': frame}, signals, quotes, context,
                                 100 * INTERVAL_MS, load_config())
     future = frame.iloc[[-1]].copy()
-    future['open_time'] = 111 * INTERVAL_MS
+    future['open_time'] = 103 * INTERVAL_MS
     future['close'] = quotes['AAAUSDT']['ask'] * 1.01
-    mature_samples(state, {'AAAUSDT': future}, 112 * INTERVAL_MS - 1)
+    mature_samples(state, {'AAAUSDT': future}, 104 * INTERVAL_MS - 1)
     assert state['market']['samples'] == 0
-    mature_samples(state, {'AAAUSDT': future}, 112 * INTERVAL_MS)
+    mature_samples(state, {'AAAUSDT': future}, 104 * INTERVAL_MS)
     assert state['market']['samples'] == 1 and not state['pending']
-    mature_samples(state, {'AAAUSDT': future}, 113 * INTERVAL_MS)
+    mature_samples(state, {'AAAUSDT': future}, 105 * INTERVAL_MS)
     assert state['market']['samples'] == 1
 
 
@@ -96,7 +96,7 @@ def test_missing_context_blocks_buys_but_allows_existing_stop_loss():
 
 
 def test_trade_feedback_uses_net_realized_result_and_entry_features_only_once():
-    state = new_learning_state(12)
+    state = new_learning_state(4)
     snapshot = {'AAAUSDT': {'vector': [1.] * DIMENSIONS, 'feedback_score': .5}}
     buy = {'side': 'BUY', 'symbol': 'AAAUSDT', 'time': 10}
     sell = {'side': 'SELL', 'symbol': 'AAAUSDT', 'time': 20, 'entry_time': 10, 'pnl': -.03}
@@ -110,7 +110,7 @@ def test_trade_feedback_uses_net_realized_result_and_entry_features_only_once():
 
 
 def test_trades_without_historical_entry_features_are_not_fabricated():
-    state = new_learning_state(12)
+    state = new_learning_state(4)
     record_trade_outcomes(state, [{'side': 'SELL', 'symbol': 'OLDUSDT', 'entry_time': 1,
                                   'time': 2, 'pnl': -1.}], {})
     assert state['feedback']['samples'] == 0
@@ -136,7 +136,7 @@ def test_missing_future_candles_are_not_replaced_by_a_different_close():
 
 def test_qualified_online_model_changes_scores_using_external_context():
     frame, signals, context, quotes = fixtures()
-    state = new_learning_state(12)
+    state = new_learning_state(4)
     state['market'].update(samples=200, evaluated=200, brier=.1, baseline_brier=.2)
     state['market']['weights'][-1] = -8.
     context['vector'][-1] = 1.
@@ -149,7 +149,7 @@ def test_qualified_online_model_changes_scores_using_external_context():
 
 def test_qualified_trade_feedback_vetoes_entry_without_changing_exit_score():
     frame, signals, context, quotes = fixtures()
-    state = new_learning_state(12)
+    state = new_learning_state(4)
     state['feedback'].update(samples=30, evaluated=30, brier=.1, baseline_brier=.25, intercept=-4.)
     _, decisions, _ = adapt_signals(state, {'AAAUSDT': frame}, signals, quotes,
                                      context, 100 * INTERVAL_MS, load_config())
@@ -162,7 +162,7 @@ def test_storage_pressure_drops_pending_samples_without_resetting_wallet_or_weig
 
     wallet = new_wallet(load_config())
     wallet['cash'] = 12.
-    wallet['learning'] = new_learning_state(12)
+    wallet['learning'] = new_learning_state(4)
     learning = wallet['learning']
     learning['market']['samples'] = 300
     learning['contexts'] = {'1': [0.] * CONTEXT_DIMENSIONS}
@@ -194,3 +194,32 @@ def test_storage_pressure_drops_pending_samples_without_resetting_wallet_or_weig
     assert persisted['cash'] == 12.
     assert persisted['learning']['market']['samples'] == 300
     assert persisted['learning_summary']['dropped_samples'] > 0
+
+
+def test_three_hour_learner_migrates_once_without_relabeling_old_predictions():
+    frame, signals, context, quotes = fixtures()
+    old = new_learning_state(12)
+    old['market']['samples'] = 300
+    old['feedback']['samples'] = 10
+    old['pending'] = [{'old_prediction': True}]
+    old['entries'] = {'AAAUSDT': {'old_entry': True}}
+    old['last_candles'] = {'AAAUSDT': signals['AAAUSDT']['candle_time']}
+    state, decisions, _ = adapt_signals(old, {'AAAUSDT': frame}, signals, quotes,
+                                       context, 100 * INTERVAL_MS, load_config())
+    assert state['horizon'] == 4 and state['market']['samples'] == 0
+    assert state['feedback']['samples'] == 0 and state['entries'] == {}
+    assert state['pending'] == [] and state['dropped_samples'] == 1
+    assert decisions['AAAUSDT']['action'] == 'WAITING'
+    assert state['migration']['previous_market_samples'] == 300
+    assert old['horizon'] == 12 and len(old['pending']) == 1
+    resumed, _, _ = adapt_signals(state, {'AAAUSDT': frame}, signals, quotes,
+                                  context, 100 * INTERVAL_MS + 1000, load_config())
+    assert resumed['migration'] == state['migration']
+    assert resumed['dropped_samples'] == 1
+
+
+def test_unplanned_horizon_change_is_not_silently_reset():
+    frame, signals, context, quotes = fixtures()
+    with pytest.raises(ValueError, match='horizon changed'):
+        adapt_signals(new_learning_state(8), {'AAAUSDT': frame}, signals, quotes,
+                      context, 100 * INTERVAL_MS, load_config())

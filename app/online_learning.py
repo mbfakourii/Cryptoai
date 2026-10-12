@@ -105,6 +105,15 @@ def mature_samples(state, frames, now):
 
 def adapt_signals(stored, frames, signals, quotes, context, now, config):
     state = copy.deepcopy(stored) if stored is not None else new_learning_state(config['horizon_bars'])
+    if state.get('schema') == 1 and state.get('horizon') == 12 and config['horizon_bars'] == 4:
+        previous = state
+        state = new_learning_state(4)
+        state['migration'] = {'from_horizon': 12, 'to_horizon': 4, 'at': now,
+                              'previous_market_samples': previous['market']['samples'],
+                              'previous_trade_samples': previous['feedback']['samples'],
+                              'discarded_pending': len(previous['pending'])}
+        state['last_candles'] = dict(previous['last_candles'])
+        state['dropped_samples'] = previous['dropped_samples'] + len(previous['pending'])
     validate_learning(state, config['horizon_bars'])
     mature_samples(state, frames, now)
     decisions = copy.deepcopy(signals)
@@ -163,6 +172,7 @@ def learning_summary(state):
             'feedback_active': active(state['feedback'], 30),
             'last_update': state['last_update'], 'pending_samples': len(state['pending']),
             'dropped_samples': state['dropped_samples'],
+            'horizon_bars': state['horizon'], 'migration': state.get('migration'),
             'brier': state['market']['brier'], 'baseline_brier': state['market']['baseline_brier']}
 
 

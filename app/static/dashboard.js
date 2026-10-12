@@ -64,7 +64,7 @@ async function refreshPortfolio() {
         : ' مدل قدیمی است؛ برای بررسی آستانه دوباره آموزش دهید.';
     const learning = wallet.learning_summary;
     if (learning) {
-      $('paper-training').textContent += ` یادگیری هر کندل: ${number(learning.market_samples)} نمونه قیمت و ${number(learning.closed_trade_samples)} نتیجه معامله؛ ${learning.market_active ? 'مدل تطبیقی فعال' : 'مدل تطبیقی در حال یادگیری و ارزیابی'}؛ آخرین آموزش تدریجی: ${learning.last_update ? date(learning.last_update) : 'در انتظار مشخص‌شدن نتیجه نمونه‌ها'}.`;
+      $('paper-training').textContent += ` افق پیش‌بینی: ${(learning.horizon_bars ?? 12) * 15} دقیقه؛ یادگیری هر کندل: ${number(learning.market_samples)} نمونه قیمت و ${number(learning.closed_trade_samples)} نتیجه معامله؛ ${learning.market_active ? 'مدل تطبیقی فعال' : 'مدل تطبیقی در حال یادگیری و ارزیابی'}؛ آخرین آموزش تدریجی: ${learning.last_update ? date(learning.last_update) : 'در انتظار مشخص‌شدن نتیجه نمونه‌ها'}.`;
       $('paper-training').textContent += learning.feedback_active ? ' فیلتر نتیجه معاملات فعال است.' : ' فیلتر نتیجه معاملات در حال ارزیابی است.';
     }
     const context = wallet.market_context;

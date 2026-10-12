@@ -8,6 +8,7 @@ import pytest
 from app.core import INTERVAL_MS
 from app.portfolio import load_config
 from app.portfolio_models import model_config, pooled_splits, select_entry_policy, unpack
+from app import portfolio_models
 
 
 def test_pooled_training_purges_future_labels_across_all_markets():
@@ -87,3 +88,35 @@ def test_legacy_models_keep_the_configured_threshold_until_retrained():
 def test_saved_threshold_cannot_bypass_configured_bounds(threshold):
     with pytest.raises(ValueError, match='entry threshold'):
         model_config({'entry_threshold': threshold}, load_config())
+
+
+def test_configured_portfolio_horizon_is_one_hour():
+    assert load_config()['horizon_bars'] * INTERVAL_MS == 3600000
+
+
+def test_old_horizon_is_retrained_before_the_matching_model_is_published(monkeypatch):
+    calls = []
+    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 12})
+    monkeypatch.setattr(portfolio_models, 'train', lambda: calls.append('train'))
+    monkeypatch.setattr(portfolio_models, 'registry', calls.append)
+    portfolio_models.ensure_horizon()
+    assert calls == ['train', 'upload']
+
+
+def test_matching_horizon_does_not_retrain_every_cycle(monkeypatch):
+    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 4})
+    monkeypatch.setattr(portfolio_models, 'train', lambda: pytest.fail('Unexpected retraining'))
+    monkeypatch.setattr(portfolio_models, 'registry', lambda command: pytest.fail('Unexpected publication'))
+    portfolio_models.ensure_horizon()
+
+
+def test_failed_retraining_cannot_publish_a_mismatched_model(monkeypatch):
+    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 12})
+
+    def fail():
+        raise RuntimeError('Unavailable candles')
+
+    monkeypatch.setattr(portfolio_models, 'train', fail)
+    monkeypatch.setattr(portfolio_models, 'registry', lambda command: pytest.fail('Unexpected publication'))
+    with pytest.raises(RuntimeError, match='Unavailable'):
+        portfolio_models.ensure_horizon()

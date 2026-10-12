@@ -13,6 +13,6 @@
   "max_drawdown_fraction": 0.20,
   "fee_bps_per_side": 10,
   "slippage_bps_per_side": 2,
-  "horizon_bars": 12,
+  "horizon_bars": 4,
   "github_repository": "mbfakourii/Cryptoai"
 }

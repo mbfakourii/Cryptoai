@@ -37,7 +37,7 @@ def test_runner_persists_learning_with_wallet_and_resumes_on_next_mature_candle(
 
     def predict(symbol, frame, bundle, now, config):
         return {'symbol': symbol, 'action': 'HOLD', 'model_score': .3,
-                'candle_time': int(frame.open_time.iloc[-1]), 'atr': 1., 'horizon_bars': 12}
+                'candle_time': int(frame.open_time.iloc[-1]), 'atr': 1., 'horizon_bars': 4}
 
     monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'test-token')
     monkeypatch.setenv('TELEGRAM_CHAT_ID', 'test-chat')
@@ -55,7 +55,7 @@ def test_runner_persists_learning_with_wallet_and_resumes_on_next_mature_candle(
     assert writes[-1]['learning_summary']['pending_samples'] == 1
     runner.run()
     assert len(writes) == 1
-    now[0] += 12 * INTERVAL_MS
+    now[0] += 4 * INTERVAL_MS
     runner.run()
     assert len(writes) == 2
     assert writes[-1]['learning_summary']['market_samples'] == 1

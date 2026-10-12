@@ -10,7 +10,7 @@ from app.portfolio_runner import persist_and_report
 def fixtures():
     config = load_config()
     signals = {symbol: {'symbol': symbol, 'action': 'BUY', 'model_score': .8,
-                        'candle_time': 900000, 'atr': .01, 'horizon_bars': 12}
+                        'candle_time': 900000, 'atr': .01, 'horizon_bars': config['horizon_bars']}
                for symbol in ('AAAUSDT', 'BBBUSDT', 'CCCUSDT', 'DDDUSDT')}
     quotes = {symbol: {'bid': 1., 'ask': 1.001} for symbol in signals}
     markets = {symbol: {'step_size': '.01', 'min_qty': '.01', 'max_qty': '100000',
@@ -25,6 +25,14 @@ def test_orders_share_twenty_dollars_and_preserve_cash_reserve():
     assert state['cash'] >= state['equity'] * config['cash_reserve_fraction']
     assert sum(position['cost'] for position in state['positions'].values()) + state['cash'] == pytest.approx(20)
     assert state['equity'] < 20
+
+
+def test_new_positions_expire_one_hour_after_entry():
+    config, signals, quotes, markets = fixtures()
+    now = 1800000
+    state, _ = paper_cycle(new_wallet(config), signals, quotes, markets, {}, now, config)
+    assert state['positions']
+    assert all(position['expires_at'] == now + 3600000 for position in state['positions'].values())
 
 
 def test_restart_cannot_buy_same_closed_candle_again():
