@@ -12,7 +12,7 @@ from app.market import book_quotes, candle_windows, public_data
 from app.market_context import collect_context
 from app.online_learning import adapt_signals, learning_summary, record_trade_outcomes, trim_pending
 from app.portfolio import load_config, new_wallet, paper_cycle, validate_wallet
-from app.portfolio_models import model_config, predict
+from app.portfolio_models import entry_policy_approved, model_config, predict
 from app.signals import GitHubDeliveryState
 
 
@@ -143,6 +143,7 @@ def run():
     state['model_metrics'] = bundle['metrics']
     state['model_trained_at'] = bundle['trained_at']
     state['entry_threshold'] = config['entry_threshold']
+    state['entry_policy_approved'] = entry_policy_approved(bundle)
     state['signal_scores'] = {symbol: signal['model_score'] for symbol, signal in signals.items()
                               if 'model_score' in signal}
     persist_and_report(store, state, sha, config)

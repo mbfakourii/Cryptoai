@@ -34,7 +34,7 @@ jobs:
         run: python -m app.portfolio_models download
       - name: Match the model training runtime
         run: python -m pip install --no-cache-dir -r data/models/portfolio-runtime.txt
-      - name: Retrain and publish when the configured horizon changes
+      - name: Retrain and publish when horizon or execution validation changes
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: python -m app.portfolio_models ensure-horizon

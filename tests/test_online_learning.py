@@ -223,3 +223,12 @@ def test_unplanned_horizon_change_is_not_silently_reset():
     with pytest.raises(ValueError, match='horizon changed'):
         adapt_signals(new_learning_state(8), {'AAAUSDT': frame}, signals, quotes,
                       context, 100 * INTERVAL_MS, load_config())
+
+
+def test_online_scoring_cannot_reenable_an_unvalidated_entry_policy():
+    frame, signals, context, quotes = fixtures()
+    signals['AAAUSDT']['entry_allowed'] = False
+    _, decisions, _ = adapt_signals(None, {'AAAUSDT': frame}, signals, quotes,
+                                     context, 100 * INTERVAL_MS, load_config())
+    assert decisions['AAAUSDT']['model_score'] == .8
+    assert decisions['AAAUSDT']['action'] == 'HOLD'

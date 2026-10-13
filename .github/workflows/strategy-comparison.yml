@@ -1,0 +1,36 @@
+name: Compare paper trading strategies
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/strategy-comparison.yml
+      - app/strategy_comparison.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cryptoai-strategy-comparison
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    if: github.event.repository.private == false && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --no-cache-dir -r requirements.txt
+      - run: python -m pytest -q
+      - name: Compare identical paper portfolios and publish diagnostics
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m app.strategy_comparison --publish

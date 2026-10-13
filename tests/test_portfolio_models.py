@@ -35,11 +35,11 @@ def test_bundle_rejects_unexpected_paths_before_extracting():
 
 
 def validation_fixture(profitable=True):
+    prices = 100 + np.arange(120) * (.5 if profitable else -.2)
     return pd.DataFrame({'symbol': ['AAAUSDT'] * 120,
                          'open_time': np.arange(120) * INTERVAL_MS,
-                         'open': 100., 'close': 100.,
-                         'high': 100.5 if profitable else 100.,
-                         'low': 100. if profitable else 99.5, 'atr': .1})
+                         'open': prices, 'close': prices,
+                         'high': prices + .1, 'low': prices - .1, 'atr': .1})
 
 
 def test_threshold_selection_can_find_validated_entries_below_the_fixed_cutoff():
@@ -104,7 +104,7 @@ def test_old_horizon_is_retrained_before_the_matching_model_is_published(monkeyp
 
 
 def test_matching_horizon_does_not_retrain_every_cycle(monkeypatch):
-    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 4})
+    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 4, 'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY}})
     monkeypatch.setattr(portfolio_models, 'train', lambda: pytest.fail('Unexpected retraining'))
     monkeypatch.setattr(portfolio_models, 'registry', lambda command: pytest.fail('Unexpected publication'))
     portfolio_models.ensure_horizon()
@@ -120,3 +120,27 @@ def test_failed_retraining_cannot_publish_a_mismatched_model(monkeypatch):
     monkeypatch.setattr(portfolio_models, 'registry', lambda command: pytest.fail('Unexpected publication'))
     with pytest.raises(RuntimeError, match='Unavailable'):
         portfolio_models.ensure_horizon()
+
+
+@pytest.mark.parametrize('count,net_return,allowed', [(20, .001, True), (19, .01, False),
+                                                     (50, -.001, False), (0, None, False)])
+def test_entry_approval_requires_positive_unseen_test_returns(count, net_return, allowed):
+    bundle = {'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY,
+                           'threshold_selection': {'status': 'validated'},
+                           'test_trade_results': {'trade_count': count, 'mean_net_return': net_return}}}
+    assert portfolio_models.entry_policy_approved(bundle) is allowed
+
+
+def test_old_intrabar_backtests_do_not_authorize_scheduled_quote_entries():
+    bundle = {'metrics': {'threshold_selection': {'status': 'validated'},
+                           'test_trade_results': {'trade_count': 100, 'mean_net_return': .01}}}
+    assert not portfolio_models.entry_policy_approved(bundle)
+
+
+def test_matching_horizon_with_old_execution_rules_is_retrained(monkeypatch):
+    calls = []
+    monkeypatch.setattr(portfolio_models.joblib, 'load', lambda path: {'horizon': 4})
+    monkeypatch.setattr(portfolio_models, 'train', lambda: calls.append('train'))
+    monkeypatch.setattr(portfolio_models, 'registry', calls.append)
+    portfolio_models.ensure_horizon()
+    assert calls == ['train', 'upload']

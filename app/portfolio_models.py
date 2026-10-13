@@ -13,12 +13,13 @@ import pandas as pd
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from xgboost import XGBClassifier
 
-from app.core import FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, label_data, make_features, simulate
+from app.core import FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, label_data, make_features
 from app.market import candle_frame, candle_windows, public_data, universe
 from app.portfolio import load_config
 from app.signals import GitHubDeliveryState
 
 FILES = ('portfolio.joblib', 'portfolio-runtime.txt')
+EXECUTION_POLICY = 'scheduled_quotes_v1'
 
 
 def pooled_splits(frames, horizon):
@@ -37,16 +38,43 @@ def pooled_splits(frames, horizon):
     return tuple(pd.concat(part, ignore_index=True) for part in parts)
 
 
+def scheduled_trades(frame, scores, threshold, config):
+    trades = []
+    prices = frame.open.to_numpy(dtype=float)
+    atrs = frame.atr.to_numpy(dtype=float)
+    times = frame.open_time.to_numpy(dtype=int)
+    fee, slip = config['fee_bps_per_side'] / 10000, config['slippage_bps_per_side'] / 10000
+    spread = config.get('backtest_spread_bps', 2) / 20000
+    horizon, next_allowed = config['horizon_bars'], 0
+    for i, score in enumerate(scores):
+        end = i + 1 + horizon
+        if i < next_allowed or score < threshold or end >= len(frame):
+            continue
+        entry = prices[i + 1] * (1 + spread) * (1 + slip)
+        atr = atrs[i]
+        stop, target = entry - 1.5 * atr, entry + 3 * atr
+        if not np.isfinite(atr) or atr <= 0 or stop <= 0:
+            continue
+        for j in range(i + 2, end + 1):
+            bid = prices[j] * (1 - spread)
+            reason = ('SL' if bid <= stop else 'TP' if bid >= target else 'TIME' if j == end
+                      else 'MODEL' if scores[j - 1] < config['exit_threshold'] else None)
+            if reason:
+                exit_price = bid * (1 - slip)
+                trades.append({'entry_time': int(times[i + 1]), 'exit_time': int(times[j]),
+                               'result': reason, 'net_return': exit_price * (1 - fee) / (entry * (1 + fee)) - 1})
+                next_allowed = j
+                break
+    return trades
+
+
 def threshold_results(frame, scores, threshold, config):
     scores = pd.Series(np.asarray(scores), index=frame.index)
     returns = []
     for _, market in frame.groupby('symbol', sort=False):
         market = market.sort_values('open_time')
-        trades = simulate(market.reset_index(drop=True), scores.loc[market.index].to_numpy(),
-                          threshold=threshold, horizon=config['horizon_bars'],
-                          fee_bps=config['fee_bps_per_side'])
-        slippage_adjustment = 2 * (2 - config['slippage_bps_per_side']) / 10000
-        returns.extend(trade['net_return'] + slippage_adjustment for trade in trades)
+        trades = scheduled_trades(market, scores.loc[market.index].to_numpy(), threshold, config)
+        returns.extend(trade['net_return'] for trade in trades)
     return {'trade_count': len(returns),
             'mean_net_return': float(np.mean(returns)) if returns else None,
             'net_profitable_fraction': float(np.mean(np.asarray(returns) > 0)) if returns else None}
@@ -109,7 +137,8 @@ def train():
               eval_set=[(validation[FEATURES], validation.target.astype(int))], verbose=False)
     policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config)
     scores = model.predict_proba(test[FEATURES])[:, 1]
-    metrics = {'train_rows': len(train_set), 'validation_rows': len(validation),
+    metrics = {'execution_policy': EXECUTION_POLICY,
+               'train_rows': len(train_set), 'validation_rows': len(validation),
                'test_rows': len(test), 'test_brier': float(brier_score_loss(test.target, scores)),
                'test_auc': float(roc_auc_score(test.target, scores)) if test.target.nunique() == 2 else None,
                'configured_entry_threshold': config['entry_threshold'],
@@ -167,6 +196,15 @@ def registry(command):
         raise RuntimeError('Portfolio publication failed.')
 
 
+def entry_policy_approved(bundle):
+    metrics = bundle.get('metrics', {})
+    test = metrics.get('test_trade_results', {})
+    return (metrics.get('execution_policy') == EXECUTION_POLICY
+            and metrics.get('threshold_selection', {}).get('status') == 'validated'
+            and test.get('trade_count', 0) >= 20
+            and test.get('mean_net_return') is not None and test['mean_net_return'] > 0)
+
+
 def predict(symbol, frame, bundle, now, config):
     config = model_config(bundle, config)
     if bundle.get('schema') != 1 or bundle.get('features') != FEATURES or bundle.get('interval') != INTERVAL:
@@ -185,13 +223,16 @@ def predict(symbol, frame, bundle, now, config):
     atr = float(latest.atr.iloc[0])
     if not np.isfinite(score) or not 0 <= score <= 1 or not np.isfinite(atr) or atr <= 0:
         raise ValueError('Invalid model output.')
-    return {'symbol': symbol, 'action': 'BUY' if score >= config['entry_threshold'] else 'HOLD',
+    entry_allowed = entry_policy_approved(bundle)
+    return {'symbol': symbol, 'action': 'BUY' if entry_allowed and score >= config['entry_threshold'] else 'HOLD',
+            'entry_allowed': entry_allowed,
             'model_score': score, 'atr': atr, 'candle_time': candle, 'horizon_bars': bundle['horizon']}
 
 
 def ensure_horizon():
     bundle = joblib.load(MODEL_DIR / FILES[0])
-    if bundle.get('horizon') == load_config()['horizon_bars']:
+    if (bundle.get('horizon') == load_config()['horizon_bars']
+            and bundle.get('metrics', {}).get('execution_policy') == EXECUTION_POLICY):
         return
     train()
     registry('upload')

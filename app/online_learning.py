@@ -135,7 +135,8 @@ def adapt_signals(stored, frames, signals, quotes, context, now, config):
         if context['ready'] and active(state['market'], 200):
             signal['model_score'] = shadow
         signal['action'] = 'BUY' if signal['model_score'] >= config['entry_threshold'] else 'HOLD'
-        if not context['ready'] or (active(state['feedback'], 30) and feedback < .5):
+        if (not context['ready'] or not signal.get('entry_allowed', True)
+                or (active(state['feedback'], 30) and feedback < .5)):
             signal['action'] = 'HOLD'
         state['pending'].append({'symbol': symbol, 'candle': candle, 'technical': technical,
                                  'base': base, 'shadow': shadow, 'reference_price': quotes[symbol]['ask'],
