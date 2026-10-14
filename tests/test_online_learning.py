@@ -118,7 +118,7 @@ def test_trades_without_historical_entry_features_are_not_fabricated():
 
 def test_adaptive_model_requires_enough_out_of_sample_results_and_better_brier():
     model = new_classifier()
-    model.update(samples=200, evaluated=199, brier=.1, baseline_brier=.2)
+    model.update(samples=200, evaluated=199, evaluation_batches=96, brier=.1, baseline_brier=.2)
     assert not active(model, 200)
     model['evaluated'] = 200
     assert active(model, 200)
@@ -137,7 +137,7 @@ def test_missing_future_candles_are_not_replaced_by_a_different_close():
 def test_qualified_online_model_changes_scores_using_external_context():
     frame, signals, context, quotes = fixtures()
     state = new_learning_state(4)
-    state['market'].update(samples=200, evaluated=200, brier=.1, baseline_brier=.2)
+    state['market'].update(samples=200, evaluated=200, evaluation_batches=96, brier=.1, baseline_brier=.2)
     state['market']['weights'][-1] = -8.
     context['vector'][-1] = 1.
     _, decisions, _ = adapt_signals(state, {'AAAUSDT': frame}, signals, quotes,
@@ -150,7 +150,7 @@ def test_qualified_online_model_changes_scores_using_external_context():
 def test_qualified_trade_feedback_vetoes_entry_without_changing_exit_score():
     frame, signals, context, quotes = fixtures()
     state = new_learning_state(4)
-    state['feedback'].update(samples=30, evaluated=30, brier=.1, baseline_brier=.25, intercept=-4.)
+    state['feedback'].update(samples=30, evaluated=30, evaluation_batches=30, brier=.1, baseline_brier=.25, intercept=-4.)
     _, decisions, _ = adapt_signals(state, {'AAAUSDT': frame}, signals, quotes,
                                      context, 100 * INTERVAL_MS, load_config())
     assert decisions['AAAUSDT']['action'] == 'HOLD'
@@ -232,3 +232,97 @@ def test_online_scoring_cannot_reenable_an_unvalidated_entry_policy():
                                      context, 100 * INTERVAL_MS, load_config())
     assert decisions['AAAUSDT']['model_score'] == .8
     assert decisions['AAAUSDT']['action'] == 'HOLD'
+
+
+def test_one_candle_update_is_independent_of_symbol_order_and_duplicate_rows():
+    rng = np.random.default_rng(12)
+    vectors = rng.normal(size=(50, DIMENSIONS)).tolist()
+    targets = [0] * 35 + [1] * 15
+    original, reversed_model, repeated = [new_classifier() for _ in range(3)]
+    learn(original, vectors, targets)
+    learn(reversed_model, vectors[::-1], targets[::-1])
+    learn(repeated, vectors * 4, targets * 4)
+    assert reversed_model['weights'] == pytest.approx(original['weights'])
+    assert repeated['weights'] == pytest.approx(original['weights'])
+    assert repeated['intercept'] == pytest.approx(original['intercept'])
+
+
+def test_large_shared_context_cannot_cause_a_single_candle_probability_collapse():
+    vector = feature_vector([.02] * 9, [5.] * CONTEXT_DIMENSIONS, .8)
+    model = new_classifier()
+    learn(model, [vector] * 50, [0] * 50)
+    assert .7 < probability(model, vector) < .8
+
+
+def test_incremental_updates_learn_a_repeatable_context_relationship():
+    positive, negative = np.zeros((2, DIMENSIONS))
+    positive[-1], negative[-1] = 1., -1.
+    model = new_classifier()
+    for _ in range(96):
+        learn(model, [positive, negative], [1, 0])
+        model = json.loads(json.dumps(model))
+    assert probability(model, positive) > .9
+    assert probability(model, negative) < .1
+
+
+def test_many_symbols_cannot_replace_forward_evaluation_over_multiple_candles():
+    from app.online_learning import evaluate_batch
+
+    model = new_classifier()
+    model['samples'] = 5000
+    for _ in range(95):
+        evaluate_batch(model, [.8] * 50, [.5] * 50, [1] * 50)
+    assert not active(model, 200)
+    evaluate_batch(model, [.8] * 50, [.5] * 50, [1] * 50)
+    assert active(model, 200)
+
+
+def test_evaluation_uses_equal_candle_weight_regardless_of_market_count_or_order():
+    from app.online_learning import evaluate_batch
+
+    first, second = new_classifier(), new_classifier()
+    for model in (first, second):
+        evaluate_batch(model, [.5], [.5], [1])
+    evaluate_batch(first, [.1, .8], [.5, .6], [0, 1])
+    evaluate_batch(second, [.8, .1] * 25, [.6, .5] * 25, [1, 0] * 25)
+    assert first['brier'] == pytest.approx(second['brier'])
+    assert first['baseline_brier'] == pytest.approx(second['baseline_brier'])
+
+
+def test_evaluator_upgrade_retains_learning_and_excludes_old_frozen_scores():
+    frame, signals, context, quotes = fixtures()
+    state, _, _ = adapt_signals(None, {'AAAUSDT': frame}, signals, quotes, context,
+                                100 * INTERVAL_MS, load_config())
+    state.pop('evaluation_version')
+    state['pending'][0].pop('evaluation_version')
+    state['market'].update(samples=9000, evaluated=9000, brier=.3, baseline_brier=.2)
+    state['entries']['OLDUSDT'] = {'entry_time': 1, 'vector': [0.] * DIMENSIONS}
+    weights = state['market']['weights'][:]
+    upgraded, _, _ = adapt_signals(state, {}, {}, {}, context,
+                                   100 * INTERVAL_MS, load_config())
+    assert upgraded['market']['samples'] == 9000
+    assert upgraded['market']['weights'] == weights
+    assert upgraded['pending'] == state['pending']
+    assert upgraded['entries'] == state['entries']
+    assert upgraded['market']['evaluated'] == 0
+    assert upgraded['evaluation_migration']['previous_evaluated'] == 9000
+    future = frame.iloc[[-1]].copy()
+    future['open_time'] = 103 * INTERVAL_MS
+    mature_samples(upgraded, {'AAAUSDT': future}, 104 * INTERVAL_MS)
+    assert upgraded['market']['samples'] == 9001
+    assert upgraded['market']['evaluated'] == 0
+
+
+def test_late_market_outcome_does_not_count_the_same_candle_twice():
+    frame, signals, context, quotes = fixtures()
+    state, _, _ = adapt_signals(None, {'AAAUSDT': frame}, signals, quotes, context,
+                                100 * INTERVAL_MS, load_config())
+    late = {**state['pending'][0], 'symbol': 'BBBUSDT'}
+    state['pending'].append(late)
+    future = frame.iloc[[-1]].copy()
+    future['open_time'] = 103 * INTERVAL_MS
+    mature_samples(state, {'AAAUSDT': future}, 104 * INTERVAL_MS)
+    assert state['market']['evaluation_batches'] == 1
+    mature_samples(state, {'BBBUSDT': future}, 105 * INTERVAL_MS)
+    assert state['market']['evaluation_batches'] == 1
+    assert state['market']['samples'] == 2
