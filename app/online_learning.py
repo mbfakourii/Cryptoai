@@ -159,6 +159,8 @@ def adapt_signals(stored, frames, signals, quotes, context, now, config):
         vector = feature_vector(technical, context['vector'], base)
         shadow = .5 * base + .5 * probability(state['market'], vector)
         feedback = probability(state['feedback'], vector)
+        signal['shadow_model_score'] = shadow
+        signal['feedback_entry_allowed'] = not (active(state['feedback'], 30) and feedback < .5)
         signal['base_model_score'] = base
         if context['ready'] and active(state['market'], 200):
             signal['model_score'] = shadow

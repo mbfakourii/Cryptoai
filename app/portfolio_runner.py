@@ -11,6 +11,7 @@ from app.core import MODEL_DIR
 from app.market import book_quotes, candle_windows, public_data
 from app.market_context import collect_context
 from app.online_learning import adapt_signals, learning_summary, record_trade_outcomes, trim_pending
+from app.online_policy import evaluate_online_policy
 from app.portfolio import load_config, new_wallet, paper_cycle, validate_wallet
 from app.portfolio_models import entry_policy_approved, model_config, predict
 from app.signals import GitHubDeliveryState
@@ -134,6 +135,10 @@ def run():
             errors[symbol] = 'Execution quote unavailable.'
     learning, signals, snapshots = adapt_signals(wallet.get('learning'), frames, signals, quotes,
                                                 context, execution_time, config)
+    baseline_approved = entry_policy_approved(bundle)
+    signals, online_policy = evaluate_online_policy(
+        learning, signals, quotes, markets, errors, context['ready'], execution_time,
+        config, bundle['trained_at'], baseline_approved)
     state, events = paper_cycle(wallet, signals, quotes, markets, errors, execution_time, config)
     record_trade_outcomes(learning, events, snapshots)
     state['learning'] = learning
@@ -143,7 +148,9 @@ def run():
     state['model_metrics'] = bundle['metrics']
     state['model_trained_at'] = bundle['trained_at']
     state['entry_threshold'] = config['entry_threshold']
-    state['entry_policy_approved'] = entry_policy_approved(bundle)
+    state['baseline_entry_policy_approved'] = baseline_approved
+    state['online_entry_policy'] = online_policy
+    state['entry_policy_approved'] = baseline_approved or online_policy['approved']
     state['signal_scores'] = {symbol: signal['model_score'] for symbol, signal in signals.items()
                               if 'model_score' in signal}
     persist_and_report(store, state, sha, config)

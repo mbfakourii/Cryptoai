@@ -61,3 +61,7 @@ def test_runner_persists_learning_with_wallet_and_resumes_on_next_mature_candle(
     assert writes[-1]['learning_summary']['market_samples'] == 1
     assert writes[-1]['learning_summary']['pending_samples'] == 1
     assert writes[-1]['market_context']['ready']
+    assert writes[-1]['online_entry_policy']['closed_trades'] == 0
+    assert not writes[-1]['online_entry_policy']['approved']
+    assert not writes[-1]['baseline_entry_policy_approved']
+    assert writes[-1]['learning']['entry_policy']['wallet']['updated_at'] == now[0]

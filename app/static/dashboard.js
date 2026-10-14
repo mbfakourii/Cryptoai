@@ -68,6 +68,10 @@ async function refreshPortfolio() {
       $('paper-training').textContent += ` افق پیش‌بینی: ${(learning.horizon_bars ?? 12) * 15} دقیقه؛ یادگیری هر کندل: ${number(learning.market_samples)} نمونه قیمت و ${number(learning.closed_trade_samples)} نتیجه معامله؛ ${learning.market_active ? 'مدل تطبیقی فعال' : 'مدل تطبیقی در حال یادگیری و ارزیابی'}؛ آخرین آموزش تدریجی: ${learning.last_update ? date(learning.last_update) : 'در انتظار مشخص‌شدن نتیجه نمونه‌ها'}.`;
       $('paper-training').textContent += learning.feedback_active ? ' فیلتر نتیجه معاملات فعال است.' : ' فیلتر نتیجه معاملات در حال ارزیابی است.';
     }
+    const onlinePolicy = wallet.online_entry_policy;
+    if (onlinePolicy) {
+      $('paper-training').textContent += ` ارزیابی سود مدل تطبیقی: ${number(onlinePolicy.recent_closed_trades)} از ${number(onlinePolicy.minimum_closed_trades)} معامله بسته‌شده؛ سود خالص معاملات اخیر: ${number(onlinePolicy.recent_net_pnl)} تتر؛ ${onlinePolicy.approved ? 'ورود تطبیقی خودکار فعال است' : 'در انتظار تأیید کیفیت پیش‌بینی و سود پس از هزینه‌ها'}.`;
+    }
     const context = wallet.market_context;
     if (context) {
       const macroText = Object.entries(context.macro).map(([key, item]) => `${key === 'gold' ? 'آتی طلا' : 'DXY'}: ${number(item.price)} (${date(item.as_of)}${item.status === 'recent' ? '' : '؛ تأخیردار یا بازار بسته'})`).join(' · ');
