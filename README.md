@@ -46,6 +46,73 @@ Evaluation version 3 trains the market learner against squared error of the actu
 
 ## Reproducible strategy comparison
 
+`python -m app.btc_walk_forward --start 2024-10-01 --end 2026-10-01 --output research/btc-walk-forward-2024-2026.json`
+runs the longer BTC comparison.
+Dates are UTC and the end is exclusive. Downloads are validated and cached in
+`data/research/`; retrying preserves completed 30-day chunks. The report includes
+the input CSV checksum, runtime versions, configuration and market filters.
+
+Each fold trains on 180 preceding days, selects settings on the next 30 days,
+and tests them on the following 60 days (a final partial fold needs 30 days).
+Training labels are purged at the validation boundary; trades drain before
+validation/test boundaries. The BTC-only baseline classifier, its causal online
+blend, a net-return regressor and trend/breakout share the actual paper engine,
+20 USDT wallet and execution costs. All families may select a 1/2/4-hour holding
+cap on validation while forecast labels remain one hour. The online blend learns
+only after labels mature; other models stay frozen within each fold.
+
+Reports distinguish the best validation-selected diagnostic from the gated
+policy, which stays in cash when validation has fewer than 20 closed trades,
+nonpositive net return or a risk halt. Test results never choose parameters.
+Every fold restarts its wallet, so compounded returns normalize independent
+folds rather than claim one continuously executable account history. Higher-cost
+tests reuse the same frozen policy. These technical-only BTC models are proxies,
+not a reconstruction of the deployed 50-market model with historical news.
+The command does not update online state or activate purchases.
+
+The checked-in [2024–2026 result](research/btc-walk-forward-2024-2026.json)
+uses 70,080 candles and nine test folds from 2025-04-29 through 2026-09-30.
+The net-return model had the smallest diagnostic loss: -1.80% normalized
+compounded return across 51 closed trades, versus -47.59% for the adaptive
+classifier, -49.29% for the baseline and -52.70% for trend/breakout. These are
+independently restarted test wallets, including rejected validation candidates;
+they are not returns of the online account or approved trading policies.
+
+The net-return model passed the 20-trade profitable validation requirement in
+zero folds, so its gated policy stayed in cash. Under higher execution costs its
+diagnostic return fell to -4.07%. No tested family established overall
+profitability. Removing all candles after the first test fold reproduced every
+first-fold validation candidate, chosen policy and test result exactly.
+
+For a fast single-market diagnostic using the local closed-candle archive, run
+`python -m app.single_market_replay --symbol BTCUSDT` (or `ETHUSDT`). This reads
+SQLite and saved market metadata without changing the database, model bundle or
+remote wallet. It fits a baseline on the chronological training slice, warms the
+online learner on validation and updates it only after each forecast horizon
+matures. Entry quantiles and the lower exit quantile come from validation scores
+only, so a BTC score distribution below 0.45 can be investigated without copying
+the baseline's score cutoffs. The fixed 0.65/0.40 policy remains a comparison.
+Only a candidate with at least 20 validation trades and positive net return can
+qualify; its later test result cannot select or tune the policy. If none qualifies,
+the best validation candidate with enough trades is reported as a rejected
+diagnostic, never as approval. This technical-only replay excludes historical
+news and macro inputs and does not substitute for fresh forward confirmation.
+It has no publication or live-activation option.
+
+`python -m app.btc_strategy_research` investigates the source of BTC losses with
+a separate net-return regressor and nine entry/exit hypotheses with one-, two-
+and four-hour holding caps (27 combinations). The forecast target stays one hour.
+Its target reproduces observed scheduled ATR stop/target and time exits after
+fees, slippage and spread. Candidate selection uses the validation slice only;
+the later archive slice and newly fetched candles after the archive are reported
+separately. Cost-free and higher-cost replays expose sensitivity to execution
+costs. Two profitable trades cannot qualify a model: validation, test, cost stress
+and fresh data must each meet the minimum evidence and profitability checks.
+Forecast errors are compared with a constant training-mean prediction; the best
+validation regressor policy is also reported separately even when it fails the
+evidence gate. Reused archive and post-archive data are exploratory, not fresh
+forward confirmation. This diagnostic neither publishes changes nor places orders.
+
 Run `python -m app.strategy_comparison` to compare the XGBoost baseline with a fixed trend/breakout policy. It fetches complete 15-minute history for 50 current liquid markets, uses the same chronological splits for both policies, and prints JSON diagnostics. It never writes the shared wallet, publishes a model, sends Telegram messages or places orders. The **Compare paper trading strategies** Actions workflow runs the same command with `--publish` to save only its diagnostics to `cryptoai-models/research/strategy-comparison.json`, including the code revision and data timestamp.
 
 The fixed policy buys when the close exceeds the previous 20-bar high, EMA20 is above EMA50, and volume is at least its 20-bar average. A close below EMA20 triggers a model-style exit; both strategies also use the existing ATR stop/target and one-hour expiry. Both replay through the actual `paper_cycle` position/risk engine with identical 20 USDT starting capital, quantity rules, fees, slippage and assumed 2 bps spreads. Execution uses the next bar's open as the observed quote. Actual spreads and workflow delays can differ.
