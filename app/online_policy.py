@@ -8,7 +8,8 @@ EVIDENCE_MAX_AGE_MS = 7 * 86400000
 
 
 def evaluate_fixed_policy(learning, signals, quotes, markets, errors, context_ready,
-                           now, config, baseline_revision, baseline_approved):
+                           now, config, baseline_revision, baseline_entry_allowed):
+    config = {key: value for key, value in config.items() if key != 'paper_entry_policy'}
     identity = {'config': config, 'baseline_revision': baseline_revision,
                 'evaluation_version': learning['evaluation_version']}
     stored = learning.get('entry_policy')
@@ -51,14 +52,15 @@ def evaluate_fixed_policy(learning, signals, quotes, markets, errors, context_re
             signal['entry_allowed'] = True
             signal['action'] = ('BUY' if signal.get('feedback_entry_allowed', True)
                                 and signal['model_score'] >= config['entry_threshold'] else 'HOLD')
-        elif not baseline_approved:
+        elif not baseline_entry_allowed:
             signal['entry_allowed'] = False
             signal['action'] = 'HOLD'
     return decisions, summary
 
 
 def evaluate_online_policy(learning, signals, quotes, markets, errors, context_ready,
-                           now, config, baseline_revision, baseline_approved):
+                           now, config, baseline_revision, baseline_entry_allowed):
+    config = {key: value for key, value in config.items() if key != 'paper_entry_policy'}
     identity = {'config': copy.deepcopy(config), 'baseline_revision': baseline_revision,
                 'evaluation_version': learning['evaluation_version'], 'search_version': 1}
     search = learning.get('threshold_search')
@@ -108,7 +110,7 @@ def evaluate_online_policy(learning, signals, quotes, markets, errors, context_r
     decisions = copy.deepcopy(signals)
     if approved:
         decisions = confirmation_decisions
-    elif not baseline_approved:
+    elif not baseline_entry_allowed:
         for signal in decisions.values():
             if signal['action'] in ('BUY', 'HOLD'):
                 signal.update(action='HOLD', entry_allowed=False)

@@ -13,7 +13,7 @@ from app.market_context import collect_context
 from app.online_learning import adapt_signals, learning_summary, record_trade_outcomes, trim_pending
 from app.online_policy import evaluate_online_policy
 from app.portfolio import load_config, new_wallet, paper_cycle, validate_wallet
-from app.portfolio_models import entry_policy_approved, model_config, predict
+from app.portfolio_models import entry_policy_approved, model_config, paper_entries_allowed, predict
 from app.signals import GitHubDeliveryState
 
 
@@ -55,7 +55,10 @@ def report_text(state):
     positions = ', '.join(state['positions']) or 'ندارد'
     events = '\n'.join(f"{event['side']} {event['symbol']} | {event['notional']:.2f} USDT | {event['reason']}"
                        for event in state['last_events']) or 'در این نوبت معامله‌ای انجام نشد.'
+    policy = ('حالت آزمایشی پس از آموزش؛ سوددهی تأیید نشده است.\n'
+              if state.get('paper_entry_status') == 'experimental' else '')
     return (f"Cryptoai | کیف پول مجازی مشترک | {len(state['universe'])} ارز\n"
+            f"{policy}"
             f"شروع: {state['initial_balance']:.2f} USDT\n"
             f"ارزش خالص: {state['equity']:.4f} USDT\n"
             f"نقد: {state['cash']:.4f} USDT\n"
@@ -136,9 +139,10 @@ def run():
     learning, signals, snapshots = adapt_signals(wallet.get('learning'), frames, signals, quotes,
                                                 context, execution_time, config)
     baseline_approved = entry_policy_approved(bundle)
+    baseline_allowed = paper_entries_allowed(bundle, config)
     signals, online_policy = evaluate_online_policy(
         learning, signals, quotes, markets, errors, context['ready'], execution_time,
-        config, bundle['trained_at'], baseline_approved)
+        config, bundle['trained_at'], baseline_allowed)
     execution_config = dict(config)
     if online_policy['approved']:
         execution_config['entry_threshold'] = online_policy['selected_threshold']
@@ -155,12 +159,16 @@ def run():
     state['baseline_entry_policy_approved'] = baseline_approved
     state['online_entry_policy'] = online_policy
     state['entry_policy_approved'] = baseline_approved or online_policy['approved']
+    state['paper_entries_allowed'] = baseline_allowed or online_policy['approved']
+    state['paper_entry_status'] = ('validated' if state['entry_policy_approved'] else
+                                   'experimental' if state['paper_entries_allowed'] else 'blocked')
     state['signal_scores'] = {symbol: signal['model_score'] for symbol, signal in signals.items()
                               if 'model_score' in signal}
     persist_and_report(store, state, sha, config)
     print(json.dumps({'equity': state['equity'], 'cash': state['cash'], 'events': events,
                       'errors': errors, 'report': state['report_status'],
                       'entry_threshold': state['entry_threshold'],
+                      'paper_entry_status': state['paper_entry_status'],
                       'signal_counts': dict(Counter(state['signals'].values())),
                       'maximum_model_score': max(state['signal_scores'].values(), default=None),
                       'learning': state['learning_summary'], 'context_errors': context['errors'],

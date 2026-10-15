@@ -2,11 +2,13 @@ import copy
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from app import portfolio_runner as runner
 from app.core import INTERVAL_MS
 from app.market_context import CONTEXT_DIMENSIONS
 from app.portfolio import load_config, new_wallet
+from app.portfolio_models import EXECUTION_POLICY, FEATURES, INTERVAL
 
 
 def test_runner_persists_learning_with_wallet_and_resumes_on_next_mature_candle(monkeypatch):
@@ -65,3 +67,59 @@ def test_runner_persists_learning_with_wallet_and_resumes_on_next_mature_candle(
     assert not writes[-1]['online_entry_policy']['approved']
     assert not writes[-1]['baseline_entry_policy_approved']
     assert writes[-1]['learning']['threshold_search']['candidates']['0.65']['wallet']['updated_at'] == now[0]
+
+
+@pytest.mark.parametrize('guard', ['none', 'halted', 'context', 'market_error', 'below_threshold', 'training_candle'])
+def test_experimental_runner_buys_only_when_execution_guards_allow_it(monkeypatch, guard):
+    config = {**load_config(), 'paper_entry_policy': 'after_training'}
+    now = 100 * INTERVAL_MS + 30000
+    rng = np.random.default_rng(4)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, .002, 100)))
+    history = pd.DataFrame({'open_time': np.arange(100) * INTERVAL_MS, 'open': close,
+                            'close': close, 'high': close * 1.01, 'low': close * .99,
+                            'volume': rng.uniform(10, 100, 100)})
+    market = {'symbol': 'AAAUSDT', 'step_size': '.01', 'min_qty': '.01',
+              'max_qty': '10000', 'min_notional': 5.}
+    markets = [{**market, 'symbol': f'MARKET{i}USDT'} for i in range(49)] + [market]
+
+    class Model:
+        def predict_proba(self, rows):
+            score = .3 if guard == 'below_threshold' else .9
+            return np.array([[1 - score, score]] * len(rows))
+
+    bundle = {'schema': 1, 'features': FEATURES, 'interval': INTERVAL, 'horizon': 4,
+              'trained_at': '2026-10-01T00:00:00Z', 'model': Model(), 'markets': markets,
+              'data_end_time': (99 if guard == 'training_candle' else 90) * INTERVAL_MS,
+              'metrics': {'execution_policy': EXECUTION_POLICY, 'train_rows': 1000,
+                          'validation_rows': 300, 'test_rows': 300,
+                          'threshold_selection': {'status': 'no_validated_threshold'}}}
+    state = new_wallet(config)
+    state['halted'] = guard == 'halted'
+    writes = []
+
+    class Store:
+        def read(self, config):
+            return copy.deepcopy(state), 'sha'
+
+    monkeypatch.setenv('TELEGRAM_BOT_TOKEN', 'test-token')
+    monkeypatch.setenv('TELEGRAM_CHAT_ID', 'test-chat')
+    monkeypatch.setattr(runner, 'load_config', lambda: config)
+    monkeypatch.setattr(runner.joblib, 'load', lambda path: bundle)
+    monkeypatch.setattr(runner, 'WalletStore', Store)
+    monkeypatch.setattr(runner, 'public_data', lambda path: {'serverTime': now})
+    monkeypatch.setattr(runner, 'candle_windows', lambda *args: (
+        {'AAAUSDT': history}, {'OTHER': 'missing'} if guard == 'market_error' else {}))
+    monkeypatch.setattr(runner, 'book_quotes', lambda symbols: {symbol: {'bid': 100., 'ask': 100.01} for symbol in symbols})
+    monkeypatch.setattr(runner, 'collect_context', lambda now: {
+        'ready': guard != 'context', 'vector': [0.] * CONTEXT_DIMENSIONS, 'errors': {},
+        'observed_at': now, 'macro': {}, 'news': [], 'news_sources': ['test']})
+    monkeypatch.setattr(runner, 'persist_and_report', lambda store, state, sha, config: writes.append(copy.deepcopy(state)))
+    runner.run()
+    result = writes[-1]
+    assert result['paper_entries_allowed'] and result['paper_entry_status'] == 'experimental'
+    assert not result['entry_policy_approved'] and not result['online_entry_policy']['approved']
+    assert bool(result['last_events']) == (guard == 'none')
+    if guard == 'none':
+        assert result['last_events'][0]['side'] == 'BUY'
+        assert 0 < result['positions']['AAAUSDT']['cost'] < 8
+        assert 'سوددهی تأیید نشده' in runner.report_text(result)

@@ -20,6 +20,20 @@ def setup_policy():
     return learning, config, markets
 
 
+def test_changing_main_wallet_experiment_mode_preserves_shadow_evidence():
+    learning, config, markets = setup_policy()
+    config.pop('paper_entry_policy', None)
+    cycle(learning, config, markets, 0, evaluator=evaluate_thresholds)
+    cycle(learning, config, markets, 1, price=104., evaluator=evaluate_thresholds)
+    before = copy.deepcopy(learning['threshold_search'])
+    assert before['candidates']['0.65']['wallet']['closed_count'] == 1
+    config['paper_entry_policy'] = 'after_training'
+    cycle(learning, config, markets, 2, evaluator=evaluate_thresholds, baseline_approved=True)
+    after = learning['threshold_search']
+    assert after['identity'] == before['identity']
+    assert after['candidates']['0.65']['wallet']['closed_count'] == 1
+
+
 def cycle(learning, config, markets, candle, price=100., **overrides):
     signal = {'symbol': 'AAAUSDT', 'action': 'HOLD', 'model_score': .8,
               'shadow_model_score': .8, 'entry_allowed': False,

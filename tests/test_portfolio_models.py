@@ -144,3 +144,39 @@ def test_matching_horizon_with_old_execution_rules_is_retrained(monkeypatch):
     monkeypatch.setattr(portfolio_models, 'registry', calls.append)
     portfolio_models.ensure_horizon()
     assert calls == ['train', 'upload']
+
+
+def trained_losing_bundle():
+    return {'schema': 1, 'features': portfolio_models.FEATURES, 'interval': portfolio_models.INTERVAL,
+            'horizon': 4, 'trained_at': '2026-10-01T00:00:00Z', 'data_end_time': 100 * INTERVAL_MS,
+            'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY,
+                        'train_rows': 1000, 'validation_rows': 300, 'test_rows': 300,
+                        'threshold_selection': {'status': 'no_validated_threshold'},
+                        'test_trade_results': {'trade_count': 30, 'mean_net_return': -.01}}}
+
+
+def test_explicit_paper_experiment_allows_trained_model_without_claiming_profit_approval():
+    bundle = trained_losing_bundle()
+    config = {**load_config(), 'paper_entry_policy': 'after_training'}
+    assert portfolio_models.paper_entries_allowed(bundle, config)
+    assert not portfolio_models.entry_policy_approved(bundle)
+
+
+@pytest.mark.parametrize('policy,mode', [('validated', 'paper'), ('after_training', 'live'),
+                                       ('after_training', None), ('unknown', 'paper')])
+def test_experimental_training_permission_is_explicit_and_paper_only(policy, mode):
+    config = {**load_config(), 'paper_entry_policy': policy, 'mode': mode}
+    assert not portfolio_models.paper_entries_allowed(trained_losing_bundle(), config)
+
+
+@pytest.mark.parametrize('missing', ['schema', 'features', 'interval', 'horizon', 'trained_at', 'data_end_time', 'metrics'])
+def test_incomplete_training_cannot_enable_experimental_paper_entries(missing):
+    bundle = trained_losing_bundle()
+    del bundle[missing]
+    assert not portfolio_models.paper_entries_allowed(bundle, {**load_config(), 'paper_entry_policy': 'after_training'})
+
+
+def test_training_without_completed_evaluation_is_not_ready_for_paper_experiment():
+    bundle = trained_losing_bundle()
+    bundle['metrics']['test_rows'] = 0
+    assert not portfolio_models.paper_entries_allowed(bundle, {**load_config(), 'paper_entry_policy': 'after_training'})

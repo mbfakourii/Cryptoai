@@ -13,6 +13,8 @@ def load_config():
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     if config['mode'] != 'paper' or not 0 < config['initial_balance_usdt'] <= 1_000_000:
         raise ValueError('Only a virtual paper wallet is supported.')
+    if config.get('paper_entry_policy', 'validated') not in ('validated', 'after_training'):
+        raise ValueError('Invalid paper entry policy.')
     if config['universe_size'] != 50 or not 1000 <= config['training_candles'] <= 10000:
         raise ValueError('Invalid training universe configuration.')
     if config['report_interval_minutes'] < 10 or config['report_interval_minutes'] % 10:

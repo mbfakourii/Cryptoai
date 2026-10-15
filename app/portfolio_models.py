@@ -205,6 +205,23 @@ def entry_policy_approved(bundle):
             and test.get('mean_net_return') is not None and test['mean_net_return'] > 0)
 
 
+def paper_entries_allowed(bundle, config):
+    if config.get('mode') != 'paper':
+        return False
+    if entry_policy_approved(bundle):
+        return True
+    if config.get('paper_entry_policy', 'validated') != 'after_training':
+        return False
+    metrics = bundle.get('metrics', {})
+    return (bundle.get('schema') == 1 and bundle.get('features') == FEATURES
+            and bundle.get('interval') == INTERVAL and bundle.get('horizon') == config['horizon_bars']
+            and isinstance(bundle.get('trained_at'), str) and bool(bundle['trained_at'])
+            and isinstance(bundle.get('data_end_time'), int) and bundle['data_end_time'] > 0
+            and metrics.get('execution_policy') == EXECUTION_POLICY
+            and all(isinstance(metrics.get(key), int) and metrics[key] > 0
+                    for key in ('train_rows', 'validation_rows', 'test_rows')))
+
+
 def predict(symbol, frame, bundle, now, config):
     config = model_config(bundle, config)
     if bundle.get('schema') != 1 or bundle.get('features') != FEATURES or bundle.get('interval') != INTERVAL:
@@ -223,7 +240,7 @@ def predict(symbol, frame, bundle, now, config):
     atr = float(latest.atr.iloc[0])
     if not np.isfinite(score) or not 0 <= score <= 1 or not np.isfinite(atr) or atr <= 0:
         raise ValueError('Invalid model output.')
-    entry_allowed = entry_policy_approved(bundle)
+    entry_allowed = paper_entries_allowed(bundle, config)
     return {'symbol': symbol, 'action': 'BUY' if entry_allowed and score >= config['entry_threshold'] else 'HOLD',
             'entry_allowed': entry_allowed,
             'model_score': score, 'atr': atr, 'candle_time': candle, 'horizon_bars': bundle['horizon']}

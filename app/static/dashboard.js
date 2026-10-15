@@ -51,7 +51,9 @@ async function refreshPortfolio() {
     const wallet = await get('/portfolio');
     if (!wallet.available) { $('paper-status').textContent = wallet.reason; return; }
     const stale = Date.now() - wallet.updated_at > 30 * 60000;
-    $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted || wallet.market_context?.ready === false || wallet.entry_policy_approved === false ? 'ورود جدید متوقف است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
+    const entriesAllowed = wallet.paper_entries_allowed ?? wallet.entry_policy_approved;
+    const experimental = wallet.paper_entry_status === 'experimental';
+    $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted || wallet.market_context?.ready === false || entriesAllowed === false || Object.keys(wallet.market_errors).length ? 'ورود جدید متوقف است' : experimental ? 'خرید آزمایشی با پول مجازی مجاز است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
     const model = wallet.model_metrics;
     $('paper-training').textContent = `آموزش: ${date(Date.parse(wallet.model_trained_at))} · ${number(model.train_rows)} نمونه آموزش · ${number(model.validation_rows)} اعتبارسنجی · ${number(model.test_rows)} آزمون · Brier: ${model.test_brier.toFixed(3)} · AUC: ${model.test_auc == null ? '—' : model.test_auc.toFixed(3)} · این معیارها بازده کیف پول نیستند.`;
     const threshold = wallet.entry_threshold ?? model.entry_threshold;
@@ -62,7 +64,8 @@ async function refreshPortfolio() {
       : policyStatus === 'no_validated_threshold'
         ? ' هیچ آستانه‌ای معیار اعتبارسنجی را نگذرانده؛ آستانه ثابت حفظ شده است.'
         : ' مدل قدیمی است؛ برای بررسی آستانه دوباره آموزش دهید.';
-    if (wallet.entry_policy_approved === false) $('paper-training').textContent += ' سیاست ورود آزمون سود خالص را نگذرانده؛ خرید جدید غیرفعال است.';
+    if (experimental) $('paper-training').textContent += ' آموزش کامل شده؛ خرید آزمایشی با پول مجازی مجاز است، اما سوددهی تأیید نشده است.';
+    else if (wallet.entry_policy_approved === false) $('paper-training').textContent += ' سیاست ورود آزمون سود خالص را نگذرانده؛ خرید جدید غیرفعال است.';
     const learning = wallet.learning_summary;
     if (learning) {
       $('paper-training').textContent += ` افق پیش‌بینی: ${(learning.horizon_bars ?? 12) * 15} دقیقه؛ یادگیری هر کندل: ${number(learning.market_samples)} نمونه قیمت و ${number(learning.closed_trade_samples)} نتیجه معامله؛ ${learning.market_active ? 'مدل تطبیقی فعال' : 'مدل تطبیقی در حال یادگیری و ارزیابی'}؛ آخرین آموزش تدریجی: ${learning.last_update ? date(learning.last_update) : 'در انتظار مشخص‌شدن نتیجه نمونه‌ها'}.`;

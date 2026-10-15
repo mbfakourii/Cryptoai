@@ -1,5 +1,6 @@
 {
   "mode": "paper",
+  "paper_entry_policy": "after_training",
   "initial_balance_usdt": 20,
   "universe_size": 50,
   "training_candles": 3000,
