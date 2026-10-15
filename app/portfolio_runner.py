@@ -139,7 +139,10 @@ def run():
     signals, online_policy = evaluate_online_policy(
         learning, signals, quotes, markets, errors, context['ready'], execution_time,
         config, bundle['trained_at'], baseline_approved)
-    state, events = paper_cycle(wallet, signals, quotes, markets, errors, execution_time, config)
+    execution_config = dict(config)
+    if online_policy['approved']:
+        execution_config['entry_threshold'] = online_policy['selected_threshold']
+    state, events = paper_cycle(wallet, signals, quotes, markets, errors, execution_time, execution_config)
     record_trade_outcomes(learning, events, snapshots)
     state['learning'] = learning
     state['learning_summary'] = learning_summary(learning)
@@ -147,7 +150,8 @@ def run():
     state['universe'] = list(markets)
     state['model_metrics'] = bundle['metrics']
     state['model_trained_at'] = bundle['trained_at']
-    state['entry_threshold'] = config['entry_threshold']
+    state['entry_threshold'] = execution_config['entry_threshold']
+    state['baseline_entry_threshold'] = config['entry_threshold']
     state['baseline_entry_policy_approved'] = baseline_approved
     state['online_entry_policy'] = online_policy
     state['entry_policy_approved'] = baseline_approved or online_policy['approved']

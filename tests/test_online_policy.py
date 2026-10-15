@@ -5,7 +5,8 @@ import pytest
 
 from app.core import INTERVAL_MS
 from app.online_learning import new_learning_state
-from app.online_policy import evaluate_online_policy
+from app.online_policy import evaluate_fixed_policy as evaluate_online_policy
+from app.online_policy import evaluate_online_policy as evaluate_thresholds
 from app.portfolio import load_config, new_wallet, paper_cycle
 
 
@@ -25,7 +26,8 @@ def cycle(learning, config, markets, candle, price=100., **overrides):
               'feedback_entry_allowed': True, 'atr': 1., 'horizon_bars': 4,
               'candle_time': candle * INTERVAL_MS}
     signal.update(overrides.pop('signal', {}))
-    return evaluate_online_policy(
+    evaluator = overrides.pop('evaluator', evaluate_online_policy)
+    return evaluator(
         learning, {'AAAUSDT': signal}, {'AAAUSDT': {'bid': price, 'ask': price + .01}},
         markets, overrides.pop('errors', {}), overrides.pop('ready', True),
         (candle + 1) * INTERVAL_MS, config, overrides.pop('revision', 'baseline-v1'),
@@ -153,3 +155,59 @@ def test_approval_still_requires_the_current_signal_to_exceed_entry_threshold():
                                signal={'shadow_model_score': .5})
     assert summary['approved']
     assert decisions['AAAUSDT']['action'] == 'HOLD'
+
+
+def test_threshold_selection_requires_separate_future_profitable_confirmation():
+    learning, config, markets = setup_policy()
+    for index in range(40):
+        decisions, summary = cycle(learning, config, markets, index * 2,
+                                    evaluator=evaluate_thresholds,
+                                    signal={'shadow_model_score': .5})
+        assert not summary['approved']
+        assert decisions['AAAUSDT']['action'] == 'HOLD'
+        _, summary = cycle(learning, config, markets, index * 2 + 1, 104.,
+                            evaluator=evaluate_thresholds,
+                            signal={'shadow_model_score': .5})
+        if index == 19:
+            assert summary['phase'] == 'confirmation'
+            assert summary['selected_threshold'] == .5
+            assert summary['closed_trades'] == 0
+            assert not summary['approved']
+        if index < 39:
+            assert not summary['approved']
+        learning = json.loads(json.dumps(learning))
+    assert summary['approved']
+    assert summary['closed_trades'] == 20
+    decisions, summary = cycle(learning, config, markets, 80,
+                                evaluator=evaluate_thresholds,
+                                signal={'shadow_model_score': .5})
+    execution_config = {**config, 'entry_threshold': summary['selected_threshold']}
+    _, events = paper_cycle(new_wallet(config), decisions,
+                            {'AAAUSDT': {'bid': 100., 'ask': 100.01}}, markets, {},
+                            81 * INTERVAL_MS, execution_config)
+    assert len(events) == 1 and events[0]['side'] == 'BUY'
+    assert summary['candidates']['0.65']['closed_trades'] == 0
+
+
+def test_losing_threshold_candidates_do_not_get_selected_to_force_trades():
+    learning, config, markets = setup_policy()
+    for index in range(20):
+        cycle(learning, config, markets, index * 5, evaluator=evaluate_thresholds)
+        _, summary = cycle(learning, config, markets, index * 5 + 4, 100.1,
+                            evaluator=evaluate_thresholds)
+    assert summary['phase'] == 'selection'
+    assert summary['selected_threshold'] is None
+    assert not summary['approved']
+
+
+def test_threshold_search_resumes_without_repeating_trades_and_resets_on_cost_change():
+    learning, config, markets = setup_policy()
+    cycle(learning, config, markets, 0, evaluator=evaluate_thresholds)
+    original = copy.deepcopy(learning['threshold_search'])
+    cycle(learning, config, markets, 0, evaluator=evaluate_thresholds)
+    assert learning['threshold_search'] == original
+    cycle(learning, config, markets, 1, 104., evaluator=evaluate_thresholds)
+    config['slippage_bps_per_side'] = 10
+    _, summary = cycle(learning, config, markets, 2, evaluator=evaluate_thresholds)
+    assert summary['selection_closed_trades'] == 0
+    assert learning['market']['samples'] == 5000

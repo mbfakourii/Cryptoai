@@ -72,6 +72,10 @@ async function refreshPortfolio() {
     if (onlinePolicy) {
       $('paper-training').textContent += ` ارزیابی سود مدل تطبیقی: ${number(onlinePolicy.recent_closed_trades)} از ${number(onlinePolicy.minimum_closed_trades)} معامله بسته‌شده؛ سود خالص معاملات اخیر: ${number(onlinePolicy.recent_net_pnl)} تتر؛ ${onlinePolicy.approved ? 'ورود تطبیقی خودکار فعال است' : 'در انتظار تأیید کیفیت پیش‌بینی و سود پس از هزینه‌ها'}.`;
     }
+    if (onlinePolicy?.candidates) {
+      const candidateText = Object.entries(onlinePolicy.candidates).map(([threshold, item]) => `${threshold}: ${number(item.closed_trades)} بسته / ${number(item.open_positions)} باز`).join('؛ ');
+      $('paper-training').textContent += ` آزمون آستانه‌ها (${candidateText}). مرحله: ${onlinePolicy.phase === 'selection' ? 'انتخاب با سود خالص' : `تأیید مستقل آستانه ${onlinePolicy.selected_threshold}`}.`;
+    }
     const context = wallet.market_context;
     if (context) {
       const macroText = Object.entries(context.macro).map(([key, item]) => `${key === 'gold' ? 'آتی طلا' : 'DXY'}: ${number(item.price)} (${date(item.as_of)}${item.status === 'recent' ? '' : '؛ تأخیردار یا بازار بسته'})`).join(' · ');

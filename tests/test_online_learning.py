@@ -326,3 +326,43 @@ def test_late_market_outcome_does_not_count_the_same_candle_twice():
     mature_samples(state, {'BBBUSDT': future}, 105 * INTERVAL_MS)
     assert state['market']['evaluation_batches'] == 1
     assert state['market']['samples'] == 2
+
+
+def test_brier_average_does_not_give_the_first_candle_an_artificial_head_start():
+    from app.online_learning import evaluate_batch
+
+    model = new_classifier()
+    evaluate_batch(model, [1.], [0.], [0])
+    for _ in range(95):
+        evaluate_batch(model, [0.], [0.], [0])
+    expected = .99 ** 95 / sum(.99 ** index for index in range(96))
+    assert model['brier'] == pytest.approx(expected)
+    assert model['brier'] < .01
+
+
+def test_market_gradient_optimizes_the_deployed_blend_instead_of_raw_probability():
+    model = new_classifier()
+    vector = feature_vector([0.] * 9, [0.] * CONTEXT_DIMENSIONS, .9)
+    model['weights'][0] = 0.
+    model['intercept'] = np.log(.8 / .2)
+    before = probability(model, vector)
+    learn(model, [vector] * 10, [1] * 8 + [0] * 2, deployed_blend=True)
+    after = probability(model, vector)
+    assert after < before
+    assert abs((.9 + after) / 2 - .8) < abs((.9 + before) / 2 - .8)
+
+
+def test_version_two_migration_keeps_weights_and_archives_completed_evaluation():
+    frame, signals, context, quotes = fixtures()
+    old = new_learning_state(4)
+    old['evaluation_version'] = 2
+    old['market'].update(samples=14000, evaluated=4800, evaluation_batches=96,
+                          brier=.19, baseline_brier=.15)
+    old['market']['weights'][1] = .2
+    state, _, _ = adapt_signals(old, {'AAAUSDT': frame}, signals, quotes, context,
+                                100 * INTERVAL_MS, load_config())
+    assert state['evaluation_migration']['previous_batches'] == 96
+    assert state['market']['weights'] == old['market']['weights']
+    assert state['market']['samples'] == 14000
+    assert state['market']['evaluation_batches'] == 0
+    assert not active(state['market'], 200)

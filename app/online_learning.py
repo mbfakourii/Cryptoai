@@ -9,7 +9,7 @@ from app.market_context import CONTEXT_DIMENSIONS
 
 DIMENSIONS = 1 + len(FEATURES) + CONTEXT_DIMENSIONS
 MAX_PENDING = 2000
-EVALUATION_VERSION = 2
+EVALUATION_VERSION = 3
 MIN_MARKET_BATCHES = 96
 
 
@@ -44,25 +44,35 @@ def probability(model, vector):
     return float(1 / (1 + np.exp(-np.clip(logit, -30, 30))))
 
 
-def learn(model, vectors, targets):
+def learn(model, vectors, targets, deployed_blend=False):
     if not vectors:
         return
     features = np.asarray(vectors, dtype=float)
     labels = np.asarray(targets, dtype=float)
     weights = np.asarray(model['weights'], dtype=float)
     logits = features @ weights + model['intercept']
-    errors = 1 / (1 + np.exp(-np.clip(logits, -30, 30))) - labels
-    step_size = .5 / max(1., float(np.mean(np.sum(features ** 2, axis=1))) + 1.)
-    weights -= step_size * (features.T @ errors / len(labels) + .001 * weights)
+    predictions = 1 / (1 + np.exp(-np.clip(logits, -30, 30)))
+    errors = predictions - labels
+    prior = np.zeros_like(weights)
+    if deployed_blend:
+        base = 1 / (1 + np.exp(-features[:, 0]))
+        errors = (.5 * base + .5 * predictions - labels) * predictions * (1 - predictions)
+        prior[0] = 1.
+    step_size = (2. if deployed_blend else .5) / max(1., float(np.mean(np.sum(features ** 2, axis=1))) + 1.)
+    weights -= step_size * (features.T @ errors / len(labels) + .001 * (weights - prior))
     model.update(weights=weights.tolist(),
                  intercept=float(model['intercept'] - step_size * errors.mean()),
                  steps=model['steps'] + 1, samples=model['samples'] + len(targets))
 
 
 def evaluate_batch(model, scores, baselines, targets):
+    previous_weight = model.get('evaluation_weight', 0.)
+    weight = .99 * previous_weight + 1.
     for key, predictions in (('brier', scores), ('baseline_brier', baselines)):
         loss = float(np.mean((np.asarray(predictions) - np.asarray(targets)) ** 2))
-        model[key] = loss if model[key] is None else .99 * model[key] + .01 * loss
+        previous = model[key] if model[key] is not None else 0.
+        model[key] = (.99 * previous_weight * previous + loss) / weight
+    model['evaluation_weight'] = weight
     model['evaluated'] += len(targets)
     model['evaluation_batches'] = model.get('evaluation_batches', 0) + 1
 
@@ -115,7 +125,7 @@ def mature_samples(state, frames, now):
             evaluate_batch(state['market'], [item[0]['shadow'] for item in eligible],
                            [item[0]['base'] for item in eligible], [item[2] for item in eligible])
             state['market']['last_evaluation_candle'] = candle
-        learn(state['market'], [item[1] for item in batch], [item[2] for item in batch])
+        learn(state['market'], [item[1] for item in batch], [item[2] for item in batch], deployed_blend=True)
     state['pending'] = remaining
     if batches:
         state['last_update'] = now
@@ -133,15 +143,19 @@ def adapt_signals(stored, frames, signals, quotes, context, now, config):
         state['last_candles'] = dict(previous['last_candles'])
         state['dropped_samples'] = previous['dropped_samples'] + len(previous['pending'])
     validate_learning(state, config['horizon_bars'])
-    if state.get('evaluation_version') not in (None, 1, EVALUATION_VERSION):
+    if state.get('evaluation_version') not in (None, 1, 2, EVALUATION_VERSION):
         raise ValueError('Unsupported online evaluation version.')
     if state.get('evaluation_version') != EVALUATION_VERSION:
         state['evaluation_migration'] = {
             'at': now, 'previous_brier': state['market']['brier'],
             'previous_baseline_brier': state['market']['baseline_brier'],
-            'previous_evaluated': state['market']['evaluated']}
+            'previous_evaluated': state['market']['evaluated'],
+            'previous_batches': state['market'].get('evaluation_batches', 0),
+            'from_version': state.get('evaluation_version')}
         for name in ('market', 'feedback'):
-            state[name].update(evaluated=0, evaluation_batches=0, brier=None, baseline_brier=None)
+            state[name].update(evaluated=0, evaluation_batches=0, evaluation_weight=0.,
+                               brier=None, baseline_brier=None)
+            state[name].pop('last_evaluation_candle', None)
         state['evaluation_version'] = EVALUATION_VERSION
     mature_samples(state, frames, now)
     decisions = copy.deepcopy(signals)
@@ -202,6 +216,7 @@ def learning_summary(state):
     return {'evaluation_version': state.get('evaluation_version'),
             'market_evaluation_batches': state['market'].get('evaluation_batches', 0),
             'minimum_market_batches': MIN_MARKET_BATCHES,
+            'previous_evaluation': state.get('evaluation_migration'),
             'market_samples': state['market']['samples'],
             'closed_trade_samples': state['feedback']['samples'],
             'market_active': active(state['market'], 200),
