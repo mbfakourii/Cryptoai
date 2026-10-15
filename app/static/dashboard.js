@@ -84,7 +84,18 @@ async function refreshPortfolio() {
     }
     if (onlinePolicy?.candidates) {
       const candidateText = Object.entries(onlinePolicy.candidates).map(([threshold, item]) => `${threshold}: ${number(item.closed_trades)} بسته / ${number(item.open_positions)} باز`).join('؛ ');
-      $('paper-training').textContent += ` آزمون آستانه‌ها (${candidateText}). مرحله: ${onlinePolicy.phase === 'selection' ? 'انتخاب با سود خالص' : `تأیید مستقل آستانه ${onlinePolicy.selected_threshold}`}.`;
+      const phase = onlinePolicy.phase === 'selection' ? 'انتخاب با سود خالص'
+        : onlinePolicy.phase === 'retry_wait' ? 'انتظار برای شروع آزمایش تازه'
+          : `تأیید مستقل آستانه ${onlinePolicy.selected_threshold}`;
+      $('paper-training').textContent += ` آزمون آستانه‌ها (${candidateText}). مرحله: ${phase}.`;
+      if (onlinePolicy.retry_count > 0) {
+        const reason = {risk_halt: 'توقف زیان آزمایش تأییدی', unprofitable_confirmation: 'زیان‌دهی آزمایش تأییدی',
+          expired_unprofitable_confirmation: 'پایان مهلت آزمایش زیان‌ده', selection_risk_halt: 'توقف زیان همه آستانه‌های آزمایشی'}[onlinePolicy.retry_reason] || 'ناموفق‌بودن آزمایش';
+        $('paper-training').textContent += ` ${number(onlinePolicy.retry_count)} آزمایش ناموفق؛ علت آخرین شروع مجدد: ${reason}.`;
+        if (onlinePolicy.phase === 'retry_wait' && Number.isFinite(onlinePolicy.retry_after)) {
+          $('paper-training').textContent += ` انتخاب مجدد با کندل تازه، زودتر از ${date(onlinePolicy.retry_after)} شروع نمی‌شود.`;
+        }
+      }
     }
     const context = wallet.market_context;
     if (context) {
