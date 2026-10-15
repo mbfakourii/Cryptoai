@@ -56,6 +56,13 @@ async function refreshPortfolio() {
     $('paper-status').textContent = `${stale ? 'داده قدیمی · ' : ''}آخرین اجرا: ${date(wallet.updated_at)} · ${wallet.universe.length} ارز · تلگرام: ${wallet.report_status} · ${wallet.halted || wallet.market_context?.ready === false || entriesAllowed === false || Object.keys(wallet.market_errors).length ? 'ورود جدید متوقف است' : experimental ? 'خرید آزمایشی با پول مجازی مجاز است' : 'خرید فعال است'} · ${Object.keys(wallet.market_errors).length} خطای بازار`;
     const model = wallet.model_metrics;
     $('paper-training').textContent = `آموزش: ${date(Date.parse(wallet.model_trained_at))} · ${number(model.train_rows)} نمونه آموزش · ${number(model.validation_rows)} اعتبارسنجی · ${number(model.test_rows)} آزمون · Brier: ${model.test_brier.toFixed(3)} · AUC: ${model.test_auc == null ? '—' : model.test_auc.toFixed(3)} · این معیارها بازده کیف پول نیستند.`;
+    const trainingEnd = model.data_windows?.train?.label_available_through_time;
+    if (Number.isFinite(trainingEnd)) $('paper-training').textContent += ` پایان داده‌های آموزش پایه: ${date(trainingEnd)}.`;
+    if (model.evaluation_policy === 'shared_wallet_v1') {
+      $('paper-training').textContent += ` بازده آزمون کیف پول مشترک: ${signed(model.test_trade_results?.net_return)}.`;
+    } else {
+      $('paper-training').textContent += ' ارزیابی مدل پایه هنوز با محدودیت‌های کیف پول مشترک انجام نشده است.';
+    }
     const threshold = wallet.entry_threshold ?? model.entry_threshold;
     if (Number.isFinite(threshold)) $('paper-training').textContent += ` آستانه خرید: ${threshold.toFixed(3)}.`;
     const policyStatus = model.threshold_selection?.status;

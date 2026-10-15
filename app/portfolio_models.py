@@ -16,6 +16,7 @@ from xgboost import XGBClassifier
 from app.core import FEATURES, INTERVAL, INTERVAL_MS, MODEL_DIR, label_data, make_features
 from app.market import candle_frame, candle_windows, public_data, universe
 from app.portfolio import load_config
+from app.portfolio_evaluation import EVALUATION_POLICY, evaluation_passed, shared_wallet_results
 from app.signals import GitHubDeliveryState
 
 FILES = ('portfolio.joblib', 'portfolio-runtime.txt')
@@ -68,19 +69,11 @@ def scheduled_trades(frame, scores, threshold, config):
     return trades
 
 
-def threshold_results(frame, scores, threshold, config):
-    scores = pd.Series(np.asarray(scores), index=frame.index)
-    returns = []
-    for _, market in frame.groupby('symbol', sort=False):
-        market = market.sort_values('open_time')
-        trades = scheduled_trades(market, scores.loc[market.index].to_numpy(), threshold, config)
-        returns.extend(trade['net_return'] for trade in trades)
-    return {'trade_count': len(returns),
-            'mean_net_return': float(np.mean(returns)) if returns else None,
-            'net_profitable_fraction': float(np.mean(np.asarray(returns) > 0)) if returns else None}
+def threshold_results(frame, scores, threshold, config, markets):
+    return shared_wallet_results(frame, scores, threshold, config, markets)
 
 
-def select_entry_policy(validation, scores, config, minimum_trades=20):
+def select_entry_policy(validation, scores, config, markets, minimum_trades=20):
     scores = np.asarray(scores, dtype=float)
     if (scores.shape != (len(validation),) or not len(scores)
             or not np.isfinite(scores).all() or ((scores < 0) | (scores > 1)).any()):
@@ -88,15 +81,21 @@ def select_entry_policy(validation, scores, config, minimum_trades=20):
     ceiling, floor = config['entry_threshold'], config['exit_threshold']
     candidates = sorted({ceiling, *[float(value) for value in np.quantile(
         scores, [.5, .6, .7, .8, .9, .95, .99, .995, .999]) if floor < value <= ceiling]})
-    evaluations = [{'threshold': threshold, **threshold_results(validation, scores, threshold, config)}
+    evaluations = [{'threshold': threshold, **threshold_results(validation, scores, threshold, config, markets)}
                    for threshold in candidates]
-    eligible = [result for result in evaluations if result['trade_count'] >= minimum_trades
-                and result['mean_net_return'] > 0]
-    selected = max(eligible, key=lambda result: (result['mean_net_return'], result['threshold'])) if eligible else None
+    eligible = [result for result in evaluations if evaluation_passed(result, minimum_trades)]
+    selected = max(eligible, key=lambda result: (result['net_return'], result['max_drawdown'], result['threshold'])) if eligible else None
     return {'entry_threshold': selected['threshold'] if selected else ceiling,
             'status': 'validated' if selected else 'no_validated_threshold',
             'minimum_trades': minimum_trades, 'validation': selected,
             'candidates': evaluations}
+
+
+def split_metadata(train_set, validation, test, horizon):
+    return {name: {'feature_start_time': int(part.open_time.min()),
+                   'feature_end_time': int(part.open_time.max()),
+                   'label_available_through_time': int(part.open_time.max()) + (horizon + 1) * INTERVAL_MS}
+            for name, part in (('train', train_set), ('validation', validation), ('test', test))}
 
 
 def model_config(bundle, config):
@@ -135,9 +134,11 @@ def train():
                           n_jobs=2, eval_metric='logloss')
     model.fit(train_set[FEATURES], train_set.target.astype(int),
               eval_set=[(validation[FEATURES], validation.target.astype(int))], verbose=False)
-    policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config)
+    policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config, markets)
     scores = model.predict_proba(test[FEATURES])[:, 1]
-    metrics = {'execution_policy': EXECUTION_POLICY,
+    windows = split_metadata(train_set, validation, test, config['horizon_bars'])
+    metrics = {'execution_policy': EXECUTION_POLICY, 'evaluation_policy': EVALUATION_POLICY,
+               'data_windows': windows,
                'train_rows': len(train_set), 'validation_rows': len(validation),
                'test_rows': len(test), 'test_brier': float(brier_score_loss(test.target, scores)),
                'test_auc': float(roc_auc_score(test.target, scores)) if test.target.nunique() == 2 else None,
@@ -146,10 +147,12 @@ def train():
                'threshold_selection': policy,
                'qualifying_test_signals': int((scores >= policy['entry_threshold']).sum()),
                'test_score_max': float(scores.max()),
-               'test_trade_results': threshold_results(test, scores, policy['entry_threshold'], config)}
+               'test_trade_results': threshold_results(test, scores, policy['entry_threshold'], config, markets)}
     bundle = {'schema': 1, 'model': model, 'features': FEATURES, 'interval': INTERVAL,
               'markets': markets, 'horizon': config['horizon_bars'], 'metrics': metrics,
               'entry_threshold': policy['entry_threshold'],
+              'training_feature_end_time': windows['train']['feature_end_time'],
+              'training_label_available_through_time': windows['train']['label_available_through_time'],
               'data_end_time': max(int(frame.open_time.iloc[-1]) for frame in frames.values()),
               'trained_at': datetime.now(timezone.utc).isoformat()}
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
@@ -198,11 +201,12 @@ def registry(command):
 
 def entry_policy_approved(bundle):
     metrics = bundle.get('metrics', {})
-    test = metrics.get('test_trade_results', {})
+    selection = metrics.get('threshold_selection', {})
     return (metrics.get('execution_policy') == EXECUTION_POLICY
-            and metrics.get('threshold_selection', {}).get('status') == 'validated'
-            and test.get('trade_count', 0) >= 20
-            and test.get('mean_net_return') is not None and test['mean_net_return'] > 0)
+            and metrics.get('evaluation_policy') == EVALUATION_POLICY
+            and selection.get('status') == 'validated'
+            and evaluation_passed(selection.get('validation'))
+            and evaluation_passed(metrics.get('test_trade_results')))
 
 
 def paper_entries_allowed(bundle, config):

@@ -65,7 +65,7 @@ def compare(frames, markets, config):
                           n_jobs=2, eval_metric='logloss')
     model.fit(train[FEATURES], train.target.astype(int),
               eval_set=[(validation[FEATURES], validation.target.astype(int))], verbose=False)
-    policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config)
+    policy = select_entry_policy(validation, model.predict_proba(validation[FEATURES])[:, 1], config, markets)
     ml_scores = {symbol: model.predict_proba(make_features(raw)[FEATURES])[:, 1]
                  for symbol, raw in frames.items()}
     breakout_scores = {symbol: trend_scores(raw) for symbol, raw in frames.items()}

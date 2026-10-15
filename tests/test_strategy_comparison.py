@@ -84,14 +84,42 @@ def test_strategy_selection_does_not_switch_to_the_best_test_result(monkeypatch)
             return np.tile([.5, .5], (len(frame), 1))
 
     monkeypatch.setattr(strategy_comparison, 'XGBClassifier', lambda **kwargs: Model())
-    monkeypatch.setattr(strategy_comparison, 'select_entry_policy',
-                        lambda *args: {'entry_threshold': .55, 'status': 'validated'})
+    def select_policy(validation, scores, config, markets):
+        assert markets == [{'symbol': 'AAAUSDT'}]
+        return {'entry_threshold': .55, 'status': 'validated'}
+
+    monkeypatch.setattr(strategy_comparison, 'select_entry_policy', select_policy)
     returns = iter([.05, -.10, .01, .90])
     monkeypatch.setattr(strategy_comparison, 'replay', lambda *args: {
         'net_return': next(returns), 'closed_trades': 25, 'halted': False, 'max_drawdown': -.02})
     result = strategy_comparison.compare({'AAAUSDT': frame}, [{'symbol': 'AAAUSDT'}], load_config())
     assert result['selected_on_validation'] == 'model'
     assert not result['test_supports_selected']
+
+
+def test_comparison_evaluates_thresholds_with_executable_market_minimums(monkeypatch):
+    frame = candles(1200)
+    price = 100 + np.sin(np.arange(len(frame)) / 8)
+    frame['open'], frame['close'] = price, price
+    frame['high'], frame['low'] = price + 1, price - 1
+    market = {'symbol': 'AAAUSDT', 'step_size': '.001', 'min_qty': '.001',
+              'max_qty': '100000', 'min_notional': 10.}
+
+    class Model:
+        def fit(self, *args, **kwargs):
+            pass
+
+        def predict_proba(self, frame):
+            return np.tile([.2, .8], (len(frame), 1))
+
+    monkeypatch.setattr(strategy_comparison, 'XGBClassifier', lambda **kwargs: Model())
+    result = strategy_comparison.compare({'AAAUSDT': frame}, [market], load_config())
+    assert result['selected_on_validation'] is None
+    assert result['threshold_policy']['status'] == 'no_validated_threshold'
+    candidate = result['threshold_policy']['candidates'][0]
+    assert candidate['evaluation_policy'] == 'shared_wallet_v1'
+    assert candidate['trade_count'] == 0
+    assert candidate['blocked_entries']
 
 
 def test_comparison_publication_only_writes_research_diagnostics(monkeypatch):

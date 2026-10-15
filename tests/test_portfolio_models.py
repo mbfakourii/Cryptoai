@@ -7,7 +7,7 @@ import pytest
 
 from app.core import INTERVAL_MS
 from app.portfolio import load_config
-from app.portfolio_models import model_config, pooled_splits, select_entry_policy, unpack
+from app.portfolio_models import model_config, pooled_splits, select_entry_policy, split_metadata, unpack
 from app import portfolio_models
 
 
@@ -42,32 +42,38 @@ def validation_fixture(profitable=True):
                          'high': prices + .1, 'low': prices - .1, 'atr': .1})
 
 
+def validation_markets():
+    return [{'symbol': 'AAAUSDT', 'step_size': '.001', 'min_qty': '.001',
+             'max_qty': '100000', 'min_notional': 1.}]
+
+
 def test_threshold_selection_can_find_validated_entries_below_the_fixed_cutoff():
     config = load_config()
-    policy = select_entry_policy(validation_fixture(), np.full(120, .45), config)
+    policy = select_entry_policy(validation_fixture(), np.full(120, .45), config, validation_markets())
     assert policy['status'] == 'validated'
     assert config['exit_threshold'] < policy['entry_threshold'] < config['entry_threshold']
     assert policy['validation']['trade_count'] >= policy['minimum_trades']
-    assert policy['validation']['mean_net_return'] > 0
+    assert policy['validation']['net_return'] > 0
+    assert policy['validation']['open_positions'] == 0
 
 
 def test_threshold_selection_does_not_force_entries_on_losing_validation_trades():
     config = load_config()
-    policy = select_entry_policy(validation_fixture(False), np.full(120, .45), config)
+    policy = select_entry_policy(validation_fixture(False), np.full(120, .45), config, validation_markets())
     assert policy['status'] == 'no_validated_threshold'
     assert policy['entry_threshold'] == config['entry_threshold']
     assert policy['validation'] is None
 
 
 def test_threshold_selection_requires_enough_validation_trades():
-    policy = select_entry_policy(validation_fixture().iloc[:4], np.full(4, .45), load_config())
+    policy = select_entry_policy(validation_fixture().iloc[:4], np.full(4, .45), load_config(), validation_markets())
     assert policy['status'] == 'no_validated_threshold'
 
 
 @pytest.mark.parametrize('scores', [np.full(120, np.nan), np.full(120, 1.1), np.full(119, .45)])
 def test_threshold_selection_rejects_invalid_validation_scores(scores):
     with pytest.raises(ValueError, match='validation scores'):
-        select_entry_policy(validation_fixture(), scores, load_config())
+        select_entry_policy(validation_fixture(), scores, load_config(), validation_markets())
 
 
 def test_saved_threshold_is_used_without_changing_risk_limits():
@@ -125,10 +131,43 @@ def test_failed_retraining_cannot_publish_a_mismatched_model(monkeypatch):
 @pytest.mark.parametrize('count,net_return,allowed', [(20, .001, True), (19, .01, False),
                                                      (50, -.001, False), (0, None, False)])
 def test_entry_approval_requires_positive_unseen_test_returns(count, net_return, allowed):
+    result = {'evaluation_policy': portfolio_models.EVALUATION_POLICY, 'synchronized': True,
+              'completed': True, 'open_positions': 0, 'halted': False, 'trade_count': 20, 'net_return': .01}
+    bundle = {'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY,
+                           'evaluation_policy': portfolio_models.EVALUATION_POLICY,
+                           'threshold_selection': {'status': 'validated', 'validation': result},
+                           'test_trade_results': {**result, 'trade_count': count, 'net_return': net_return}}}
+    assert portfolio_models.entry_policy_approved(bundle) is allowed
+
+
+def test_independent_market_profits_cannot_authorize_shared_wallet_entries():
     bundle = {'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY,
                            'threshold_selection': {'status': 'validated'},
-                           'test_trade_results': {'trade_count': count, 'mean_net_return': net_return}}}
-    assert portfolio_models.entry_policy_approved(bundle) is allowed
+                           'test_trade_results': {'trade_count': 100, 'mean_net_return': .01}}}
+    assert not portfolio_models.entry_policy_approved(bundle)
+
+
+@pytest.mark.parametrize('invalid', [None, {'net_return': -.01}, {'trade_count': 19},
+                                    {'halted': True}, {'completed': False}, {'open_positions': 1}])
+def test_passing_test_cannot_override_missing_or_rejected_validation(invalid):
+    result = {'evaluation_policy': portfolio_models.EVALUATION_POLICY, 'synchronized': True,
+              'completed': True, 'open_positions': 0, 'halted': False, 'trade_count': 20, 'net_return': .01}
+    bundle = {'metrics': {'execution_policy': portfolio_models.EXECUTION_POLICY,
+                           'evaluation_policy': portfolio_models.EVALUATION_POLICY,
+                           'threshold_selection': {'status': 'validated',
+                                                   'validation': None if invalid is None else {**result, **invalid}},
+                           'test_trade_results': result}}
+    assert not portfolio_models.entry_policy_approved(bundle)
+
+
+def test_split_metadata_distinguishes_training_features_from_future_label_availability():
+    parts = [pd.DataFrame({'open_time': np.arange(start, start + 100) * INTERVAL_MS})
+             for start in (0, 200, 400)]
+    metadata = split_metadata(*parts, 4)
+    assert metadata['train']['feature_end_time'] == 99 * INTERVAL_MS
+    assert metadata['train']['label_available_through_time'] == 104 * INTERVAL_MS
+    assert metadata['validation']['feature_start_time'] == 200 * INTERVAL_MS
+    assert metadata['test']['feature_end_time'] == 499 * INTERVAL_MS
 
 
 def test_old_intrabar_backtests_do_not_authorize_scheduled_quote_entries():
