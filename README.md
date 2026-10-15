@@ -102,6 +102,25 @@ diagnostic return fell to -4.07%. No tested family established overall
 profitability. Removing all candles after the first test fold reproduced every
 first-fold validation candidate, chosen policy and test result exactly.
 
+`python -m app.btc_refresh_research` uses that cached CSV and report to compare
+daily and weekly refitting of the net-return regressor against its frozen model.
+It verifies the CSV hash and reproduces every frozen fold before comparing new
+results. Each refresh uses a rolling 180-day window of already matured labels;
+all entry/exit policies remain fixed from the source validation. Every fit records
+its training and prediction cutoffs. Refreshing is a new procedure and inherits
+no profitability approval from the source model.
+
+The [refresh comparison](research/btc-refresh-2024-2026.json) reproduced the frozen
+-1.80% result and found -4.20% for daily refresh and -0.69% for weekly refresh.
+Both refresh procedures closed only 27 trades; higher costs reduced their returns
+to -5.41% and -1.94%. Daily training did not improve this strategy, and neither
+procedure established positive after-cost performance. Both refresh procedures
+also refit at test start, so comparison against frozen includes this initial
+freshness as well as later cadence. These are previously inspected historical
+periods, not new confirmation data. The 598 refresh fits took about 96 seconds
+locally; that measures this BTC regressor, not the complete 50-market workflow.
+The command publishes no models and never changes the online wallet.
+
 For a fast single-market diagnostic using the local closed-candle archive, run
 `python -m app.single_market_replay --symbol BTCUSDT` (or `ETHUSDT`). This reads
 SQLite and saved market metadata without changing the database, model bundle or
